@@ -1,0 +1,101 @@
+{
+  "name": "dsh-llm-neuralwatt",
+  "version": "0.8.6-rc.3",
+  "description": "Neuralwatt (OpenAI-compatible gateway) chat-completions adapter for the DeepSeek Harness LLM seam. Provider route id 'neuralwatt', display name 'Neuralwatt'. Dual-face: host half registers the LLM adapter and chat-only model discovery; browser half adds a Neuralwatt settings section to dsh web. The API key is configured on the web settings page (fixed credentials reference 'neuralwatt'), never read from environment variables.",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": "./lib/client.js",
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "src",
+    "scripts/build-client.mjs",
+    "cordis.patch.yml",
+    "README.md",
+    "NOTICE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-api-remotes"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "npm run build:host && npm run build:client",
+    "prepack": "npm run build",
+    "build:host": "tsc -p tsconfig.json && node scripts/build-host.mjs",
+    "build:client": "node scripts/build-client.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json",
+    "test": "npm run typecheck"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "neuralwatt",
+    "llm",
+    "provider",
+    "openai-compatible"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-client-connection": ">=0.1.5-rc.1 <0.1.6",
+    "@deepseek-ai/dsh-credentials": ">=0.1.5-rc.1 <0.1.6",
+    "@deepseek-ai/dsh-launch-environment": ">=0.1.5-rc.1 <0.1.6",
+    "@deepseek-ai/dsh-llm": ">=0.1.5-rc.1 <0.1.6",
+    "@deepseek-ai/dsh-settings": ">=0.1.5-rc.1 <0.1.6",
+    "@deepseek-ai/dsh-timeout": ">=0.1.5-rc.1 <0.1.6",
+    "@deepseek-ai/schemastery": "*",
+    "react": "^18.2.0"
+  },
+  "dependencies": {
+    "eventsource-parser": "^3.1.0",
+    "undici": "^7"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-api-remotes": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-connection": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-locale": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-ui-settings": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-credentials": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-launch-environment": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-llm": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-settings": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-timeout": "0.1.5-rc.2",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^18.2.0",
+    "esbuild": "^0.25.0",
+    "jsdom": "^29.1.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "@deepseek-ai/dsh-type-meta": "npm:@deepseek-ai/dsh-brand@0.1.5-rc.2",
+    "@deepseek-ai/dsh-compact": "npm:@deepseek-ai/dsh-brand@0.1.5-rc.2",
+    "@deepseek-ai/dsh-paths": "npm:@deepseek-ai/dsh-brand@0.1.5-rc.2",
+    "@deepseek-ai/dsh-user-interaction": "npm:@deepseek-ai/dsh-brand@0.1.5-rc.2"
+  }
+}

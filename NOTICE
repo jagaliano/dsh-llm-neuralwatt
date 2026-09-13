@@ -1,0 +1,3 @@
+This package was initially scaffolded from dsh-llm-newapi by wenzetan.
+Copyright (c) 2026 wenzetan. Licensed under the MIT License; see LICENSE.
+It has been adapted for Neuralwatt and contains original Neuralwatt quota integration work.

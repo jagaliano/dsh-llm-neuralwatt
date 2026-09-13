@@ -1,0 +1,264 @@
+/**
+ * Browser half apply: register the Neuralwatt copy dictionary and, once the
+ * `settings.section` declaration is on the ledger, one settings page of our
+ * own. Zero dsh modifications — the section slot is `kind: 'list'`, built for
+ * feature-owned pages ("adding a setting never means editing the shell").
+ *
+ * Seam (dsh 0.1.5): the browser half mounts as a plain cordis plugin
+ * module (`inject` + `apply(ctx)`); there is no dedicated client-runtime
+ * package anymore, and `ConnectionHandle.api` is gone. Data access rides the
+ * typert Remote namespaces (`ctx.remote.settings` / `.credentials` / `.llm`,
+ * assembled by `@deepseek-ai/dsh-api-remotes`) and the plugin's own host RPC
+ * channel (`ctx.connection.rpc.call`). The section registers through the
+ * settings shell's `settings.section` slot with the locale seat declared, so
+ * the renderer supplies the bound `t`.
+ */
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+// Type-only: pulls the ctx.slots merge into this program.
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+// Type-only: pulls the ctx.locale merge into this program.
+import type {} from '@deepseek-ai/dsh-client-locale/client'
+// Type-only: pulls the settings shell's SlotMap merge (the 'settings.section' entry).
+import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+// Type-only: pulls the ctx.remote merge into this program.
+import type {} from '@deepseek-ai/dsh-api-remotes/client'
+import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
+import { NeuralwattSection } from './NeuralwattSection.tsx'
+import type { NeuralwattSectionInjected } from './NeuralwattSection.tsx'
+import { en, zh } from './locale.ts'
+import type { ModelsDevParamsRequest, ModelsDevParamsResponse } from './params-types.ts'
+import type { NeuralwattQuotas } from './quota-types.ts'
+
+/** Copy namespace owned by this plugin. */
+const NS = 'settings.neuralwatt'
+
+/**
+ * Section styles. The browser bundle is one JS file (the module loader serves
+ * no plugin CSS), so the section injects its rules as a fiber-scoped
+ * `<style>` element. Every color rides the shell's `--dsw-alias-*` design
+ * tokens, which `ui-theme` redefines under `body[data-ds-dark-theme]` — one
+ * set of rules renders correctly in both light and dark themes. The recipes
+ * mirror `ui-settings-models` (`.input`, `.primaryButton`,
+ * `.secondaryButton`).
+ */
+const SECTION_CSS = `
+.neuralwatt-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.neuralwatt-input {
+  box-sizing: border-box; padding: 6px 10px; border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit; font-size: 13px;
+}
+.neuralwatt-input:focus { outline: none; border-color: var(--dsw-alias-brand-primary); }
+.neuralwatt-input::placeholder { color: var(--dsw-alias-label-dimmed); }
+.neuralwatt-input:disabled { opacity: 0.6; cursor: default; }
+.neuralwatt-button {
+  padding: 6px 12px; border-radius: 6px; font: inherit; font-size: 13px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: transparent; color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+.neuralwatt-button:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.neuralwatt-button:disabled { opacity: 0.4; cursor: default; }
+.neuralwatt-button--primary {
+  border-color: transparent;
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+.neuralwatt-button--primary:hover:not(:disabled) { background: var(--dsw-alias-button-primary-hover); }
+.neuralwatt-error { color: var(--dsw-alias-state-error-primary); }
+.neuralwatt-hint { font-size: 12px; color: var(--dsw-alias-label-tertiary); }
+/* Model catalog, mirroring ui-settings-models: one bordered entry per
+   model, id and display name on the row, capacities behind the row's own
+   disclosure. */
+.neuralwatt-catalog {
+  display: flex; flex-direction: column; gap: 10px;
+  padding-top: 12px; margin-bottom: 12px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+.neuralwatt-catalog-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.neuralwatt-catalog-title {
+  font-size: 12px; line-height: 18px; font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+}
+.neuralwatt-linkbutton {
+  box-sizing: border-box; display: inline-flex; align-items: center;
+  height: 28px; padding: 0 10px; border: none; border-radius: 14px;
+  background: transparent; color: var(--dsw-alias-label-primary);
+  font: inherit; font-size: 12px; cursor: pointer;
+}
+.neuralwatt-linkbutton:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.neuralwatt-linkbutton:disabled { opacity: 0.4; cursor: default; }
+.neuralwatt-empty { margin: 0; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; }
+.neuralwatt-entry {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  padding: 6px;
+}
+.neuralwatt-modelrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+}
+/* Square, label-free affordances: the row's own inputs carry the meaning, so
+   the actions stay glyphs and announce themselves through aria-label. */
+.neuralwatt-iconbutton {
+  box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border: none; border-radius: 6px;
+  background: transparent; color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+.neuralwatt-iconbutton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+.neuralwatt-iconbutton:disabled { opacity: 0.4; cursor: default; }
+.neuralwatt-iconbutton--danger:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  color: var(--dsw-alias-state-error-primary);
+}
+.neuralwatt-modeladvanced {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+  padding: 8px 4px 2px;
+}
+.neuralwatt-modelfield { display: flex; flex-direction: column; gap: 4px; }
+.neuralwatt-modelfield-label { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; }
+.neuralwatt-addmodel {
+  box-sizing: border-box; align-self: flex-start; display: inline-flex; align-items: center;
+  gap: 4px; height: 28px; padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l2); border-radius: 14px;
+  background: transparent; color: var(--dsw-alias-label-primary);
+  font: inherit; font-size: 12px; cursor: pointer;
+}
+.neuralwatt-addmodel:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.neuralwatt-addmodel:disabled { opacity: 0.4; cursor: default; }
+.neuralwatt-candidates { border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+.neuralwatt-candidates-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.neuralwatt-candidates-head label { display: inline-flex; align-items: center; gap: 6px; color: var(--dsw-alias-label-primary); }
+.neuralwatt-candidates ul { list-style: none; padding: 0; margin: 8px 0; }
+/* Proxy control + models.dev params panel. */
+.neuralwatt-proxyrow {
+  display: flex; flex-direction: row; align-items: center; flex-wrap: wrap;
+  gap: 8px; margin-bottom: 12px;
+}
+.neuralwatt-proxyrow label { display: inline-flex; align-items: center; gap: 6px; color: var(--dsw-alias-label-primary); }
+.neuralwatt-select {
+  box-sizing: border-box; padding: 6px 10px; border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit; font-size: 13px; max-width: 220px;
+}
+.neuralwatt-params {
+  border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px;
+  padding: 12px; margin-bottom: 12px;
+}
+.neuralwatt-params-summary { margin: 6px 0 10px; color: var(--dsw-alias-label-tertiary); font-size: 12px; }
+.neuralwatt-params-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center; gap: 8px; padding: 4px 0;
+}
+/* The id rides a fixed-width text box so rows align; content wider than
+   the box stays hidden until hover, when it scrolls horizontally. */
+.neuralwatt-params-id {
+  box-sizing: border-box; width: 30ch; max-width: 30ch;
+  padding: 4px 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit; font-size: 12px; line-height: 18px;
+  text-align: left; white-space: nowrap; overflow: hidden;
+  scrollbar-width: thin;
+}
+.neuralwatt-params-id:hover { overflow-x: auto; }
+.neuralwatt-params-values {
+  color: var(--dsw-alias-label-tertiary); font-size: 12px;
+  font-variant-numeric: tabular-nums; text-align: left;
+}
+.neuralwatt-params-unmatched { color: var(--dsw-alias-label-dimmed); font-size: 12px; padding: 4px 0; }
+/* Neuralwatt account usage dashboard. */
+.neuralwatt-usage { border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px; padding: 18px; margin: 16px 0; }
+.neuralwatt-usage-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.neuralwatt-usage-head h3 { margin: 0; font-size: 18px; }
+.neuralwatt-badges { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.neuralwatt-badge { padding: 4px 10px; border-radius: 999px; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-secondary); font-size: 12px; font-weight: 600; }
+.neuralwatt-badge--active { background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-foreground); }
+.neuralwatt-usage-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.neuralwatt-usage-card { border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; padding: 14px; min-height: 74px; }
+.neuralwatt-usage-label { color: var(--dsw-alias-label-tertiary); font-size: 12px; margin-bottom: 8px; }
+.neuralwatt-usage-value { color: var(--dsw-alias-label-primary); font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.neuralwatt-usage-detail { color: var(--dsw-alias-label-tertiary); font-size: 12px; margin-top: 5px; }
+.neuralwatt-meter { margin: 14px 0; }
+.neuralwatt-meter-row { display: flex; justify-content: space-between; gap: 12px; color: var(--dsw-alias-label-secondary); font-size: 13px; margin-bottom: 7px; }
+.neuralwatt-meter-value { color: var(--dsw-alias-label-primary); font-variant-numeric: tabular-nums; }
+.neuralwatt-meter-track { height: 8px; overflow: hidden; border-radius: 999px; background: var(--dsw-alias-bg-layer-2); }
+.neuralwatt-meter-fill { height: 100%; border-radius: inherit; background: var(--dsw-alias-button-primary-fill); transition: width 160ms ease; }
+.neuralwatt-meter-fill--warning { background: var(--dsw-alias-state-error-primary); }
+.neuralwatt-usage-updated { color: var(--dsw-alias-label-tertiary); font-size: 12px; margin: 12px 0 0; }
+`
+
+/** Required services (cordis fiber inject): the slots/locale/connection faces and the host remotes. */
+export const inject = [
+  'slots', 'locale', 'connection',
+  'remote', 'remote.settings', 'remote.credentials', 'remote.llm',
+]
+
+/**
+ * Register the Neuralwatt settings section.
+ * @param ctx - client root context.
+ */
+export function apply(ctx: ClientContext): void {
+  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'llm-neuralwatt: copy dictionaries')
+
+  // Fiber-scoped styles: removed with the plugin, so a reload swaps them cleanly.
+  if (typeof document !== 'undefined') {
+    ctx.effect(() => {
+      const element = document.createElement('style')
+      element.textContent = SECTION_CSS
+      document.head.append(element)
+      return () => { element.remove() }
+    }, 'llm-neuralwatt: section styles')
+  }
+
+  const connection = ctx.get('connection') as ConnectionHandle
+  const t = ctx.locale.bind(NS)
+
+  // One plain callback over the plugin's host RPC channel: the browser names
+  // the gateway model ids (and the proxy draft) and the host downloads
+  // https://models.dev/api.json — no cross-origin fetch in the browser.
+  const fetchModelParams = (request: ModelsDevParamsRequest) =>
+    connection.rpc.call('/llm-neuralwatt', 'models-dev-params', request) as Promise<
+      { ok: true; value: ModelsDevParamsResponse } | { ok: false; error: { message: string } }
+    >
+  const fetchQuota = () => connection.rpc.call('/llm-neuralwatt', 'quota', null) as Promise<
+    { ok: true; value: NeuralwattQuotas } | { ok: false; error: { message: string } }
+  >
+
+  // The section's data face over the typert Remote namespaces: reads and
+  // writes the llm-neuralwatt settings section, the fixed credential reference,
+  // and the gateway model interrogation for this namespace.
+  const injected = (): NeuralwattSectionInjected => ({
+    fetchQuota,
+    fetchModelParams,
+    api: {
+      describeSettings: () => ctx.remote.settings.describe(),
+      mutateSettings: (ns, ops, expectedRevision) =>
+        ctx.remote.settings.mutate(ns, ops, expectedRevision),
+      describeCredentials: (refs) => ctx.remote.credentials.describe(refs),
+      setCredential: (ref, value) => ctx.remote.credentials.set(ref, value),
+      discoverModels: (settingsNs, request) => ctx.remote.llm.discoverModels(settingsNs, request),
+    },
+  })
+
+  ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section',
+    id: 'neuralwatt',
+    order: 15,
+    label: () => t('nav'),
+    locale: NS,
+    inject: injected,
+  }, NeuralwattSection))
+}
