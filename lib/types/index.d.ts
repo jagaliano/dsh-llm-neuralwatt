@@ -39,6 +39,12 @@ export declare const DEFAULT_BASE_URL = "https://api.neuralwatt.com/v1";
 export interface Config {
     /** Gateway base including the `/v1` prefix; defaults to $NEURALWATT_BASE_URL from a trusted layer, then the placeholder `https://neuralwatt.example.com/v1`. */
     baseURL?: string;
+    /**
+     * The fixed credential reference exposed to the shared Models page. This is
+     * not user-configurable: it mirrors the `neuralwatt` reference resolved by
+     * the adapter so the page can render its standard red/green credential dot.
+     */
+    apiKeyEnv?: string;
     /** Advisory models shown by discovery consumers; defaults to none — a gateway's model set is deployment-specific. */
     models?: NeuralwattCatalogModel[];
     /**
