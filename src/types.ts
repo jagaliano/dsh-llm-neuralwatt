@@ -17,6 +17,11 @@ export interface WireRequest {
   temperature?: number
   max_tokens?: number
   /**
+   * OpenAI-compatible reasoning effort, mapped from `GenerateOptions.reasoningEffort`.
+   * Only ever sent for a model whose catalog row declares supported efforts.
+   */
+  reasoning_effort?: string
+  /**
    * Stop sequences (OpenAI `stop`): generation halts as soon as the model
    * produces any one of these strings. Mapped from `GenerateOptions.stop`.
    */

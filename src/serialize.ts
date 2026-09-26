@@ -76,6 +76,9 @@ function serializeAssistant(content: readonly ContentBlock[]): WireMessage {
 export function serializeMessages(messages: readonly RequestMessage[]): WireMessage[] {
   const wire: WireMessage[] = []
   for (const message of messages) {
+    // Captured before the narrowing below so the unreachable tail can still name
+    // the role that landed there.
+    const role: string = message.role
     if (message.role === 'developer') continue
     assertTextOnly(message.content)
     if (message.role === 'system') {
@@ -95,8 +98,15 @@ export function serializeMessages(messages: readonly RequestMessage[]): WireMess
       })
       continue
     }
-    // user role (Message or identity-free RequestUserInput)
-    wire.push({ role: 'user', content: flattenText(message.content) })
+    if (message.role === 'user') {
+      wire.push({ role: 'user', content: flattenText(message.content) })
+      continue
+    }
+    // Unreachable while MessageRoleMap stays closed. A role added upstream must
+    // get an explicit branch here: silently degrading it to a user turn would
+    // erase whatever it carried.
+    const unhandled: never = message
+    throw new LlmError(`The Neuralwatt chat-completions adapter cannot serialize a '${role}' message.`, 'UNSUPPORTED_CONTENT')
   }
   return wire
 }
