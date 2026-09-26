@@ -1,13 +1,12 @@
 /**
  * Register a {@link NeuralwattAdapter} for the `neuralwatt` provider route on
  * `ctx.llm`, with connection facts resolved per request instead of frozen at
- * load: the plugin layers its `cordis.yml` entry config under the optional
- * `llm-neuralwatt` user-settings section (`ctx.settings`) and resolves the API
- * key through the optional credential seam (`ctx.credentials`), so a changed
- * base URL, catalog, or key reaches the very next request without restarting
- * anything, while an in-flight stream keeps the facts it started with. The
- * one registration-captured fact — the retry policy — re-registers the route
- * in place when it changes. The plugin also serves model discovery for the
+ * load: the `llm-neuralwatt` settings form is derived from this module's
+ * exported {@link Config} schema by the 0.1.7 settings service, and every
+ * accepted write reloads this entry, so a changed base URL, catalog, or retry
+ * policy reaches the very next request without restarting anything, while an
+ * in-flight stream keeps the facts it started with. The API key resolves
+ * through the optional credential seam (`ctx.credentials`). The plugin also serves model discovery for the
  * `llm-neuralwatt` settings namespace by interrogating `GET {baseURL}/models`.
  * @module dsh-llm-neuralwatt
  */
@@ -26,9 +25,6 @@ import llmManifest from "@deepseek-ai/dsh-llm/package.json" with {
 };
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
 import { launchEnvironmentOf } from "@deepseek-ai/dsh-launch-environment";
-// Type-only: pulls the cordis Context merge that adds the `settings`
-// service (ctx.settings.installSection) into this program.
-import type {} from "@deepseek-ai/dsh-settings";
 import { MAX_TIMER_DELAY_MS } from "@deepseek-ai/dsh-timeout";
 import {
   DEFAULT_CONTEXT_WINDOW,
@@ -65,7 +61,7 @@ export type {
 } from "./adapter.ts";
 export type * from "./types.ts";
 
-const MINIMUM_DSH_VERSION = "0.1.5-rc.1";
+const MINIMUM_DSH_VERSION = "0.1.7-rc.1";
 
 type SemverIdentifier = number | string;
 interface ParsedSemver {
@@ -136,35 +132,6 @@ if (!isSupportedHostVersion(hostLlmVersion)) {
     `dsh-llm-neuralwatt requires dsh >= ${MINIMUM_DSH_VERSION} ` +
       `(host ships @deepseek-ai/dsh-llm ${hostLlmVersion}); ` +
       `upgrade the host: npm install -g @deepseek-ai/dsh@${MINIMUM_DSH_VERSION}`,
-  );
-}
-
-/** Compare JSON-compatible values structurally without requiring a new host package. */
-function deepEqualJson(left: unknown, right: unknown): boolean {
-  if (left === right) return true;
-  if (
-    typeof left !== "object" ||
-    typeof right !== "object" ||
-    left === null ||
-    right === null
-  )
-    return false;
-  if (Array.isArray(left) || Array.isArray(right)) {
-    if (
-      !Array.isArray(left) ||
-      !Array.isArray(right) ||
-      left.length !== right.length
-    )
-      return false;
-    return left.every((entry, index) => deepEqualJson(entry, right[index]));
-  }
-  const leftRecord = left as Record<string, unknown>;
-  const rightRecord = right as Record<string, unknown>;
-  const keys = Object.keys(leftRecord);
-  if (keys.length !== Object.keys(rightRecord).length) return false;
-  return keys.every(
-    (key) =>
-      key in rightRecord && deepEqualJson(leftRecord[key], rightRecord[key]),
   );
 }
 
@@ -463,7 +430,13 @@ export function resolveAdapterOptions(
 }
 
 export function apply(ctx: Context, config: Config): void {
-  let current: () => Config = () => config;
+  // Config arrives whole per fiber: the 0.1.7 settings service derives the
+  // `llm-neuralwatt` form from the exported {@link Config} schema and reloads
+  // this entry on every accepted write, so a changed base URL, catalog, or
+  // retry policy reaches the next request without this plugin tracking a
+  // live section itself. The one registration-captured fact stays capture
+  // time; see {@link ensureRegistrationFacts}.
+  const current: () => Config = () => config;
   let lastRaw: Config | undefined;
   let lastGood: ResolvedNeuralwattOptions | undefined;
   const options = (): ResolvedNeuralwattOptions => {
@@ -481,7 +454,7 @@ export function apply(ctx: Context, config: Config): void {
       if (lastGood === undefined) throw error;
       lastRaw = raw;
       ctx.logger.error(
-        `${PKG}: keeping the last good configuration after an invalid settings section`,
+        `${PKG}: keeping the last good configuration after an invalid config`,
       );
       ctx.logger.error(error);
       return lastGood;
@@ -554,21 +527,12 @@ export function apply(ctx: Context, config: Config): void {
       settingsPath: [],
     },
   ]);
-  // Route effects bind to this apply fiber via the stable `ctx` reference,
-  // even when a swap runs inside the scoped settings callback below.
-  const registration = ctx.llm.registerAdapter([PROVIDER], adapter);
-  let registeredPolicy = options().retryPolicy;
-  const ensureRegistrationFacts = (): void => {
-    const policy = options().retryPolicy;
-    if (deepEqualJson(policy, registeredPolicy)) return;
-    // The registry captures the retry policy at registration, so it is the one
-    // fact per-request resolution cannot refresh. `replace` re-reads it in one
-    // synchronous registry section: disposing and re-registering instead would
-    // publish an empty route set between the two, and an observer that reacted
-    // to it would see this provider disappear and come back.
-    registration.replace([PROVIDER]);
-    registeredPolicy = policy;
-  };
+  // Route effects bind to this apply fiber via the stable `ctx` reference.
+  // The registry captures the retry policy at registration; a settings write
+  // that changes it reloads this entry (0.1.7 settings reload the owning
+  // plugin), so registration always sees a settled value and the 0.1.5-era
+  // in-place `registration.replace` hook is no longer needed.
+  ctx.llm.registerAdapter([PROVIDER], adapter);
   // Model discovery for the settings namespace this plugin owns: the Models
   // page interrogates the gateway's /models with the draft's endpoint and
   // one-shot credential, or the current snapshot's facts. The runtime hands
@@ -670,23 +634,8 @@ export function apply(ctx: Context, config: Config): void {
     );
   });
 
-  // The settings section installs through the `settings` service seam
-  // (0.1.5 seam): the consumer registers while the provider is present and
-  // falls back to the composition entry when it detaches, exactly the
-  // layering the old top-level installSettingsSection helper provided.
-  ctx.inject(["settings"], (settingsCtx) => {
-    settingsCtx.settings.installSection(ctx, NS, Config, config, {
-      // Refuse an unserviceable section where it is written: without this a
-      // schema-valid value the adapter cannot serve (a non-http(s) baseURL,
-      // an empty exclude-pattern entry) stores with a success notice and
-      // then silently keeps the last good facts at every request.
-      validate: (value) => {
-        resolveAdapterOptions(value, launchEnvironmentOf(ctx));
-      },
-      setSource: (source) => {
-        current = source;
-      },
-      onChange: ensureRegistrationFacts,
-    });
-  });
+  // The settings form for this plugin is derived from the exported `Config`
+  // schema by the 0.1.7 settings service — there is no section to install.
+  // Refusal of an unserviceable value happens at the schema and at the
+  // profile write that carries it, not in a plugin-side validate hook.
 }

@@ -1,22 +1,25 @@
 /**
  * Serialize harness messages into gateway chat completions. User text is
  * joined; assistant text becomes `content`, tool calls become `tool_calls`,
- * and tool results become separate tool messages. Assistant reasoning is
- * replayed as `reasoning_content` only on tool-call turns, as required by
- * DeepSeek-family upstreams (other OpenAI-compatible upstreams ignore the
- * field). Core image blocks are rejected explicitly because this wire route
- * is text-only; unknown declaration-merged block types retain the adapter's
- * documented extension fallback. No reasoning-control fields are emitted:
- * the adapter declares no reasoning efforts, so callers cannot pass one.
+ * and tool results — first-class `role: 'tool'` messages since the 0.1.7
+ * message model — become standalone `{role:'tool'}` entries. Assistant
+ * reasoning is replayed as `reasoning_content` only on tool-call turns, as
+ * required by DeepSeek-family upstreams (other OpenAI-compatible upstreams
+ * ignore the field). Core image blocks are rejected explicitly because this
+ * wire route is text-only. `developer` messages carry session tool
+ * additions/removals, which the wire shape has no slot for: the effective
+ * tool set already travels in `tools`, so those rows are skipped. No
+ * reasoning-control fields are emitted: the adapter declares no reasoning
+ * efforts, so callers cannot pass one.
  * @module dsh-llm-neuralwatt/serialize
  */
 
 import { contentHasImage, LlmError } from '@deepseek-ai/dsh-llm'
-import type { ContentBlock, GenerateOptions, Message } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, GenerateOptions, RequestMessage } from '@deepseek-ai/dsh-llm'
 import type { WireMessage, WireRequest, WireTool } from './types.ts'
 
-/** Join the text blocks of a message (used for user/tool-result content). */
-function flattenText(blocks: ContentBlock[]): string {
+/** Join the text blocks of a message (used for user/system/tool content). */
+function flattenText(blocks: readonly ContentBlock[]): string {
   return blocks
     .filter(block => block.type === 'text')
     .map(block => block.text)
@@ -31,13 +34,13 @@ function assertTextOnly(blocks: readonly ContentBlock[]): void {
 }
 
 /** Serialize one assistant message (text + reasoning + tool calls). */
-function serializeAssistant(message: Message): WireMessage {
-  const text = flattenText(message.content)
-  const reasoning = message.content
+function serializeAssistant(content: readonly ContentBlock[]): WireMessage {
+  const text = flattenText(content)
+  const reasoning = content
     .filter(block => block.type === 'reasoning')
     .map(block => block.text)
     .join('')
-  const toolCalls = message.content
+  const toolCalls = content
     .filter(block => block.type === 'tool-call')
     .map(block => ({
       id: block.id,
@@ -63,40 +66,37 @@ function serializeAssistant(message: Message): WireMessage {
 }
 
 /**
- * Serialize the conversation. `tool-result` blocks become standalone
- * `{role: 'tool'}` messages; the harness puts each tool result in its own
- * user-role message, so a mixed user message contributes its text first and
- * its tool results as separate wire messages after.
+ * Serialize the conversation. Tool results are their own `role: 'tool'`
+ * messages in the 0.1.7 model, each answered to its `toolCallId`; user
+ * messages contribute their text only. Developer messages (session tool
+ * additions/removals) have no wire slot and are skipped.
  * @param messages - the harness conversation, in order.
  * @returns the wire messages; order preserved, each tool result expanded into its own entry.
  */
-export function serializeMessages(messages: Message[]): WireMessage[] {
+export function serializeMessages(messages: readonly RequestMessage[]): WireMessage[] {
   const wire: WireMessage[] = []
   for (const message of messages) {
+    if (message.role === 'developer') continue
     assertTextOnly(message.content)
     if (message.role === 'system') {
       wire.push({ role: 'system', content: flattenText(message.content) })
       continue
     }
     if (message.role === 'assistant') {
-      wire.push(serializeAssistant(message))
+      wire.push(serializeAssistant(message.content))
       continue
     }
-    // user role: tool results ride in user messages in the harness
-    // vocabulary, but the gateway wants them as role:'tool' messages.
-    const toolResults = message.content.filter(block => block.type === 'tool-result')
-    const text = flattenText(message.content)
-    if (text.length > 0 || toolResults.length === 0) {
-      wire.push({ role: 'user', content: text })
-    }
-    for (const result of toolResults) {
+    if (message.role === 'tool') {
       wire.push({
         role: 'tool',
-        tool_call_id: result.toolCallId,
+        tool_call_id: message.toolCallId,
         // Empty tool output still needs SOME content on the wire.
-        content: flattenText(result.content) || '(no output)',
+        content: flattenText(message.content) || '(no output)',
       })
+      continue
     }
+    // user role (Message or identity-free RequestUserInput)
+    wire.push({ role: 'user', content: flattenText(message.content) })
   }
   return wire
 }

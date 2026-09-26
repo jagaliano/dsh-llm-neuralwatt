@@ -30,4 +30,4 @@ pnpm run typecheck
 pnpm run build
 ```
 
-This plugin targets DSH `0.1.5-rc`.
+This plugin targets DSH `0.1.7-rc`.
