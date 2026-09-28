@@ -283,8 +283,11 @@ export function matchModelsDev(api: ModelsDevApi, id: string, hints?: ProviderHi
  * reduced to its API root, because the setting reads as an endpoint while the
  * adapter builds several paths from it (`/chat/completions`, `/models`,
  * `/quota`); accepting only the root would silently post the other two to the
- * wrong place. Failing here — at the explicit resolve step — names the setting
- * to fix instead of surfacing later as an opaque fetch failure.
+ * wrong place. Matching is case-insensitive (a saved `.../Chat/Completions`
+ * still reduces) and the suffix must be the final path segment ending at a
+ * segment boundary, so a proxy whose own path merely contains the words is left
+ * alone. Failing here — at the explicit resolve step — names the setting to fix
+ * instead of surfacing later as an opaque fetch failure.
  * @param raw - the configured or drafted base URL, with or without a chat path.
  * @returns the normalized API root with no trailing slash.
  */
@@ -293,9 +296,33 @@ export function normalizeBaseUrl(raw: string): string {
   if (!/^https?:\/\//.test(base)) {
     throw new Error(`${PKG}: baseURL must be an absolute http(s) URL including the /v1 prefix, e.g. https://api.neuralwatt.com/v1 (got: ${raw.trim()})`)
   }
-  // `.../v1/chat/completions` (or /chat/completions) is the request endpoint;
-  // every consumer below appends its own path, so strip the chat suffix.
-  return base.replace(/\/chat\/completions$/, '')
+  // Look only at the path. A query string or fragment would otherwise defeat the
+  // suffix match (`?x=1` is not the end of the string) and, worse, survive into
+  // the appended URL as `<value>/chat/completions`. The scheme check above is
+  // not sufficient for `URL` — `https://` with no host still throws — so parse
+  // defensively and report it as the same configuration error.
+  let url: URL
+  try {
+    url = new URL(base)
+  } catch {
+    throw new Error(`${PKG}: baseURL is not a valid URL (got: ${raw.trim()})`)
+  }
+  const path = url.pathname
+  // `.../v1/chat/completions` (or `/chat/completions`) is the request endpoint;
+  // every consumer below appends its own path, so strip the trailing pair of
+  // segments. `pathname` never carries a trailing slash unless one was typed, so
+  // match at end-of-path only.
+  const stripped = path.replace(/(?:\/chat\/completions){1,2}$/i, '')
+  // No chat suffix means this is already a root (or a proxy path) — leave it be.
+  if (stripped === path) return base
+  // A value that is ONLY the chat path reduces to its origin root: the user named
+  // `<origin>/chat/completions`, so `<origin>` is the root they meant.
+  url.pathname = stripped === '' ? '/' : stripped
+  url.search = ''
+  url.hash = ''
+  const normalized = url.toString().replace(/\/+$/, '')
+  // `URL` renders an origin-level path as a bare `/`; drop it for consistency.
+  return normalized.endsWith('/') ? normalized.slice(0, -1) : normalized
 }
 
 function modelInfo(provider: string, model: NeuralwattCatalogModel): LlmModelInfo {
@@ -740,7 +767,7 @@ export class NeuralwattAdapter extends LlmAdapter {
       if (!exhausted && iterator.return !== undefined) {
         try {
           await iterator.return()
-        } catch (_abortedTransportTeardown) {
+        } catch {
           // The consumer controller already owns termination; a return-time abort cannot add a second outcome.
         }
       }

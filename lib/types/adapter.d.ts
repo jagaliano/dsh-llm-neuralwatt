@@ -141,8 +141,11 @@ export declare function matchModelsDev(api: ModelsDevApi, id: string, hints?: Pr
  * reduced to its API root, because the setting reads as an endpoint while the
  * adapter builds several paths from it (`/chat/completions`, `/models`,
  * `/quota`); accepting only the root would silently post the other two to the
- * wrong place. Failing here — at the explicit resolve step — names the setting
- * to fix instead of surfacing later as an opaque fetch failure.
+ * wrong place. Matching is case-insensitive (a saved `.../Chat/Completions`
+ * still reduces) and the suffix must be the final path segment ending at a
+ * segment boundary, so a proxy whose own path merely contains the words is left
+ * alone. Failing here — at the explicit resolve step — names the setting to fix
+ * instead of surfacing later as an opaque fetch failure.
  * @param raw - the configured or drafted base URL, with or without a chat path.
  * @returns the normalized API root with no trailing slash.
  */

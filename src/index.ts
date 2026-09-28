@@ -386,13 +386,23 @@ export function resolveAdapterOptions(
   config: Config,
   environment?: ReturnType<typeof launchEnvironmentOf>,
 ): ResolvedNeuralwattOptions {
-  // Absent everywhere falls back to {@link DEFAULT_BASE_URL} below. A value
-  // someone actually typed must still be a usable http(s) URL, which
-  // normalizeBaseUrl enforces below.
-  const named =
+  // The schema materializes {@link DEFAULT_BASE_URL}, so an unset field arrives
+  // here non-empty. Treat that exact value as "unset" to keep the documented
+  // precedence: an explicitly saved endpoint beats $NEURALWATT_BASE_URL from a
+  // trusted layer, which beats the default. A value someone actually typed must
+  // still be a usable http(s) URL, which normalizeBaseUrl enforces below.
+  // Tradeoff: because a parsed config cannot say whether a field was typed or
+  // defaulted, someone who saves exactly the default value lets the environment
+  // win. That is the same outcome as not saving it, and only the default string
+  // is affected.
+  const configured =
     config.baseURL !== undefined && config.baseURL.trim().length > 0
       ? config.baseURL
-      : environment?.get(BASE_URL_ENV)?.value;
+      : undefined;
+  const named =
+    configured !== undefined && configured !== DEFAULT_BASE_URL
+      ? configured
+      : environment?.get(BASE_URL_ENV)?.value ?? configured;
   const rawBase =
     named !== undefined && named.trim().length > 0 ? named : DEFAULT_BASE_URL;
   const modelExcludePatterns = config.modelExcludePatterns ?? [
