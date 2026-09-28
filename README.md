@@ -72,18 +72,20 @@ endpoint.
 
 An unusable value is refused when you save it, not silently ignored: the field
 must be an `http(s)` URL naming a real host, with no embedded credentials.
-That means a full dotted-quad IPv4 address or a hostname (a name whose last
-label contains a letter), an optional port from 0 to 65535, and — for IPv6 —
-a bracketed literal such as `http://[::1]:8080/v1`. `https://user:pass@host` is
-rejected; put the API key on the Models page instead. Ambiguous spellings the
-URL parser would silently rewrite are refused too: `https://9` would become
-`0.0.0.9`, `https://1.2.3` would become `1.2.0.3`, and `0x7f.1` would become
-`127.0.0.1`. Accepting one of those would send your API key to a host you never
-named. A path segment of `.` or `..` is refused as well, because the URL parser
-resolves it before anything else runs and would move the request root — and the
-API key with it — somewhere you did not type. Percent-encoded separators are
-refused for the same reason: `…/v1/chat/completions%2F` never matches the
-suffix strip and would silently re-append the chat path.
+That means a full dotted-quad IPv4 address or a hostname whose final label
+begins with a letter, an optional port from 0 to 65535 written without leading
+zeros, and — for IPv6 — a bracketed literal such as `http://[::1]:8080/v1`.
+`https://user:pass@host` is rejected; put the API key on the Models page
+instead. Ambiguous spellings the URL parser would silently rewrite are refused
+too: `https://9` would become `0.0.0.9`, `https://1.2.3` would become
+`1.2.0.3`, and `0xdeadbeef` would become `222.173.190.239`. Accepting one of
+those would send your API key to a host you never named. A path segment of `.`
+or `..` is refused as well, because the URL parser resolves it before anything
+else runs and would move the request root — and the API key with it — somewhere
+you did not type; the check covers the backslash spelling too, since the parser
+treats `\` as `/` for http(s). For the same reason the path may not contain a
+percent sign — an encoded dot, slash, or backslash could smuggle a segment or
+separator past the literal checks — and may not contain an empty segment.
 
 The check runs in two layers driven by one shared predicate, so they cannot
 disagree: the settings schema rejects the value on save, and `normalizeBaseUrl`
