@@ -167,12 +167,37 @@ const BASE_URL_ENV = "NEURALWATT_BASE_URL";
 export const DEFAULT_BASE_URL = "https://api.neuralwatt.com/v1/chat/completions";
 /**
  * Shape every `baseURL` must have before it is persisted: an http(s) scheme
- * followed by an authority, and no credentials. Kept deliberately loose about
- * the path — {@link normalizeBaseUrl} owns what the value means, and this only
- * rejects what could never become a fetchable endpoint. The `@` exclusion is
- * what refuses userinfo (`https://user:pass@host`), which `fetch` rejects.
+ * followed by a reachable authority and no credentials.
+ *
+ * The pattern is deliberately a strict SUBSET of what {@link normalizeBaseUrl}
+ * accepts, so anything that passes here also survives normalization at request
+ * time. A pattern that admitted more would let an unnormalizable value store
+ * cleanly, then throw inside `resolveAdapterOptions`, where `options()` would
+ * swallow it and keep serving the previous endpoint while the settings page
+ * showed the new one. That failure is silent, so the guard has to be exact.
+ *
+ * The host alternatives mirror the WHATWG URL parser rather than being loose:
+ * a bracketed literal must look like IPv6 (two colons, a hex digit, and no
+ * `%` zone — the parser rejects zones and bare `[9]`), a dotted-quad must have
+ * four in-range octets, and a name's final label must contain a letter, because
+ * a trailing all-numeric label makes the parser treat the host as IPv4 and
+ * either throw or silently rewrite it (`https://9` becomes `0.0.0.9`). The port
+ * is bounded to 0-65535, matching the parser. `[^/\s@]` no longer appears: its
+ * `@` exclusion was the only thing refusing userinfo, and it is now refused by
+ * every alternative requiring a valid host start.
  */
-const BASE_URL_PATTERN = /^https?:\/\/[^/\s@]+(?:\/|$)/iu;
+const URL_OCTET = String.raw`(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)`;
+const URL_IPV4 = String.raw`(?:${URL_OCTET}\.){3}${URL_OCTET}`;
+const URL_IPV6 =
+  String.raw`\[(?=[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*:)(?=[0-9A-Fa-f:.]*[0-9A-Fa-f])[0-9A-Fa-f:.]+?\]`;
+const URL_HOSTNAME =
+  String.raw`(?:[\p{L}\p{N}_~-]+\.)*[\p{L}_~-]*\p{L}[\p{L}\p{N}_~-]*`;
+const URL_PORT =
+  String.raw`(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?`;
+const BASE_URL_PATTERN = new RegExp(
+  `^https?://(?:${URL_IPV6}|${URL_IPV4}|${URL_HOSTNAME})${URL_PORT}(?:/|\\s*$)`,
+  "iu",
+);
 /** The single provider route this plugin owns. */
 const PROVIDER = "neuralwatt";
 

@@ -9,3 +9,4 @@ test/.tmp-host-surface/
 .tmp-npm-cache/
 .verify/
 models_api.json
+.q*/

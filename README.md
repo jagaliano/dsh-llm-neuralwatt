@@ -71,11 +71,22 @@ Trailing slashes are removed from the path itself, so
 endpoint.
 
 An unusable value is refused when you save it, not silently ignored: the field
-must be an `http(s)` URL with a host and no embedded credentials
-(`https://user:pass@host` is rejected — put the API key on the Models page
-instead). This matters because a value accepted here but unusable at request
-time would leave the adapter serving the *previous* endpoint while the page
-displayed the new one.
+must be an `http(s)` URL naming a real host, with no embedded credentials.
+That means a full dotted-quad IPv4 address or a hostname (a name whose last
+label contains a letter), an optional port from 0 to 65535, and — for IPv6 —
+a bracketed literal such as `http://[::1]:8080/v1`. `https://user:pass@host` is
+rejected; put the API key on the Models page instead. Ambiguous spellings the
+URL parser would silently rewrite are refused too: `https://9` would become
+`0.0.0.9`, `https://1.2.3` would become `1.2.0.3`, and `0x7f.1` would become
+`127.0.0.1`. Accepting one of those would send your API key to a host you never
+named.
+
+The check runs in two layers: the settings schema rejects the value on save, and
+`normalizeBaseUrl` refuses the same shapes again at request time, so a value
+that arrives from a hand-edited profile or `$NEURALWATT_BASE_URL` cannot bypass
+it. This matters because a value accepted but unusable at request time would
+leave the adapter serving the *previous* endpoint while the page displayed the
+new one.
 
 ## Quota reporting
 

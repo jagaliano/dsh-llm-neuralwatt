@@ -329,6 +329,25 @@ export function normalizeBaseUrl(raw: string): string {
     url.password = ''
     throw new Error(`${PKG}: baseURL must not contain credentials; store the API key on the Models page instead (got: ${url.toString().replace(/\/+$/, '')})`)
   }
+  // `URL` guesses a host's form before parsing it, and that guess can silently
+  // rewrite what the user typed: `https://9` parses as `0.0.0.9`, `https://1.2.3`
+  // as `1.2.0.3`, `0x7f.1` as `127.0.0.1`, and `1.2.3.4.` as `1.2.3.4`. The
+  // settings schema rejects these before they are stored, but a value arriving
+  // from a hand-edited profile or `$NEURALWATT_BASE_URL` skips that check, and an
+  // accepted rewrite would send the API key to a host the user never named.
+  // Reject only when the parser produced a dotted quad the user did not literally
+  // type; equivalent IPv6 spellings (e.g. `[::ffff:1.2.3.4]`) are left alone.
+  const authority = base.replace(/^https?:\/\//i, '').split(/[/?#]/, 1)[0] ?? '';
+  const typedHost = authority.replace(/^.*@/, '').replace(/:\d*$/, '');
+  const parsedHost = url.hostname;
+  if (
+    /^\d+\.\d+\.\d+\.\d+$/.test(parsedHost) &&
+    typedHost !== parsedHost
+  ) {
+    throw new Error(
+      `${PKG}: baseURL host is ambiguous and would be rewritten to ${parsedHost} (got: ${raw.trim()}); write a hostname or a plain dotted-quad address`,
+    )
+  }
   // Drop query and fragment BEFORE inspecting the path. Every consumer appends a
   // path to the result, and appending to a value that still carried a query
   // would put the appended segment INSIDE the query

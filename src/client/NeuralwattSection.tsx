@@ -347,11 +347,16 @@ export function NeuralwattSection(props: NeuralwattSectionProps): ReactNode {
   /**
    * Refuse the save with a localized message when the endpoint cannot work.
    *
-   * The host schema types `baseURL` as a plain string, so an unusable value
-   * (a non-http scheme, or embedded credentials `fetch` rejects) would be
-   * persisted happily and then fail on every request — where `options()`
-   * swallows it and silently keeps serving the previous endpoint. Rejecting it
-   * here, before the write, is what makes the bad value visible to the user.
+   * This is the *friendly* layer, not the authoritative one: the settings
+   * schema carries the same rule and is enforced by `resolveConfig` on every
+   * write, so a value that slips past here is still refused — just with the
+   * schema's raw message instead of a localized one. Keeping the two in step
+   * is what makes the common mistakes readable.
+   *
+   * An unusable value must not be persisted: `options()` swallows a resolve
+   * failure and keeps serving the previous endpoint, so a stored-but-broken
+   * URL would leave the adapter talking to the old host while the page showed
+   * the new one.
    */
   const baseUrlProblem = (): string | undefined => {
     const candidate = baseURL.trim()
@@ -364,6 +369,17 @@ export function NeuralwattSection(props: NeuralwattSectionProps): ReactNode {
     }
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return t('baseUrlInvalid')
     if (parsed.username !== '' || parsed.password !== '') return t('baseUrlInvalid')
+    // `URL` guesses a host's form and can rewrite it: `https://9` becomes
+    // `0.0.0.9` and `0x7f.1` becomes `127.0.0.1`. The API key would then go to
+    // a host the user never named, so refuse a dotted quad they did not type.
+    const typedHost = candidate
+      .replace(/^https?:\/\//i, '')
+      .split(/[/?#]/, 1)[0]!
+      .replace(/^.*@/, '')
+      .replace(/:\d*$/, '')
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(parsed.hostname) && typedHost !== parsed.hostname) {
+      return t('baseUrlInvalid')
+    }
     return undefined
   }
 
