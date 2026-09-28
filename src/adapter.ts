@@ -311,17 +311,22 @@ export function normalizeBaseUrl(raw: string): string {
   // `.../v1/chat/completions` (or `/chat/completions`) is the request endpoint;
   // every consumer below appends its own path, so strip the trailing pair of
   // segments. `pathname` never carries a trailing slash unless one was typed, so
-  // match at end-of-path only.
+  // match at end-of-path only — that boundary is what leaves a proxy path which
+  // merely contains the words (`/proxy/chat/completions/v1`) untouched.
   const stripped = path.replace(/(?:\/chat\/completions){1,2}$/i, '')
-  // No chat suffix means this is already a root (or a proxy path) — leave it be.
-  if (stripped === path) return base
   // A value that is ONLY the chat path reduces to its origin root: the user named
   // `<origin>/chat/completions`, so `<origin>` is the root they meant.
+  // `URL` renders an origin-level path as `/`, which the trailing-slash strip
+  // below removes for consistency.
   url.pathname = stripped === '' ? '/' : stripped
+  // Always drop the query and fragment, even when no chat suffix was present:
+  // every consumer appends a path to the result, and appending to a value with a
+  // query would put the appended segment INSIDE the query
+  // (`/v1?x=1/models` requests `/v1`, not `/v1/models`). A base URL has no
+  // meaningful query or fragment.
   url.search = ''
   url.hash = ''
   const normalized = url.toString().replace(/\/+$/, '')
-  // `URL` renders an origin-level path as a bare `/`; drop it for consistency.
   return normalized.endsWith('/') ? normalized.slice(0, -1) : normalized
 }
 
