@@ -45,20 +45,21 @@ export interface VolatileRef<T> {
  *
  * `.volatile()` is a schemastery 3.18.3+ feature and the host line this plugin
  * targets (`dsh 0.1.7-rc.2`) pins `~3.18.4`, so the method is always present
- * at runtime. It is reached through a structural member rather than
- * schemastery's own typing because that typing does not declare it — which is
- * also what lets this function preserve the caller's declared field type, so
+ * at runtime. It is reached through a structural member because schemastery
+ * types it as changing the schema's `Mode` generic
+ * (`Schema<S, T, 'volatile'>`), which is not assignable to the caller's
+ * declared field type — the cast is what preserves that declared type, so
  * {@link Config} stays the plain shape every consumer reads.
  * @param schema - the field schema.
  * @returns the same schema carrying `meta.volatile`.
  */
 export function markVolatile<T>(schema: T): T {
-  // SAFETY: invariant TypeScript cannot check — `.volatile()` exists on every
-  // schemastery schema instance at runtime on the supported host line (the
-  // method is defined in 3.18.3+), but package 3.18.4's declaration file does
-  // not declare it. The cast is what lets the caller's declared field type
-  // survive the mark, so `Config` stays the plain shape consumers read; the
-  // returned value is the same schema instance carrying `meta.volatile`.
+  // SAFETY: invariant TypeScript cannot check — `.volatile()` IS declared at
+  // schemastery 3.18.4, but it returns `Schema<…, 'volatile'>`, whose output
+  // type (`Volatile<T | undefined>`) is not assignable back to the caller's
+  // declared field type (TS2322). The cast preserves that declared field type
+  // while the runtime value is the same schema instance carrying
+  // `meta.volatile`.
   return (schema as unknown as { volatile(): T }).volatile()
 }
 

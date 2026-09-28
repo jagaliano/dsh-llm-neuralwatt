@@ -49,12 +49,47 @@ function validUsage(value: unknown): value is QuotaUsage {
     && isFiniteNumber(value.tokens) && isFiniteNumber(value.energy_kwh)
 }
 
+/**
+ * Validate the subscription summary the quota panel renders.
+ *
+ * Only the fields that panel dereferences on a non-null `subscription` are
+ * required: it formats these as numbers and reads `current_period_end.length`,
+ * so a partially-shaped object (a gateway that omits the energy block) would
+ * throw mid-render — a React render crash, not a catchable fetch error.
+ */
+function validSubscription(value: unknown): boolean {
+  return value === null || (
+    isRecord(value)
+    && typeof value.plan === 'string'
+    && isFiniteNumber(value.kwh_used)
+    && isFiniteNumber(value.kwh_included)
+    && isFiniteNumber(value.kwh_remaining)
+    && typeof value.current_period_end === 'string'
+  )
+}
+
+/** Validate the API-key allowance the panel formats as numbers. */
+function validKey(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  const allowance = value.allowance
+  return allowance === null || (
+    isRecord(allowance)
+    && isFiniteNumber(allowance.limit_usd)
+    && isFiniteNumber(allowance.spent_usd)
+    && isFiniteNumber(allowance.remaining_usd)
+    && typeof allowance.period === 'string'
+  )
+}
+
 function assertQuota(value: unknown): asserts value is NeuralwattQuotas {
   if (!isRecord(value) || !isRecord(value.balance) || !isRecord(value.usage) || !isRecord(value.limits)
     || !validUsage(value.usage.current_month) || !validUsage(value.usage.lifetime)
     || !isFiniteNumber(value.balance.credits_remaining_usd) || !isFiniteNumber(value.balance.total_credits_usd)
     || !isFiniteNumber(value.balance.credits_used_usd) || typeof value.balance.accounting_method !== 'string'
-    || typeof value.limits.rate_limit_tier !== 'string') {
+    || typeof value.limits.rate_limit_tier !== 'string'
+    || typeof value.snapshot_at !== 'string'
+    || !validSubscription(value.subscription)
+    || !validKey(value.key)) {
     throw new Error('Neuralwatt quota response has an invalid shape')
   }
 }

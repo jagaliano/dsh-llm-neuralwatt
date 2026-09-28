@@ -64,6 +64,11 @@ A trailing `/chat/completions` is stripped case-insensitively (and a query
 string or fragment is dropped) before those paths are appended, so a full
 endpoint never turns into `/chat/completions/models`. A path that merely
 contains those words, such as a reverse-proxy prefix, is left untouched.
+Trailing slashes are removed from the path itself, so
+`https://host/v1/chat/completions/?x=1` normalizes exactly like the bare
+endpoint. An endpoint carrying embedded credentials (`https://user:pass@host`)
+is rejected with a clear error rather than handed to `fetch`, which refuses
+such URLs — put the API key on the Models page instead.
 
 ## Quota reporting
 

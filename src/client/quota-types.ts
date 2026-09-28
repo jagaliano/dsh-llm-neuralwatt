@@ -1,3 +1,12 @@
+/**
+ * Browser-side view of the quota payload.
+ *
+ * This mirrors the host contract in `src/quota.ts` — deliberately narrowed to
+ * the fields {@link NeuralwattSection} renders, since the client bundle cannot
+ * import the host module. There is no compile-time link between the two, so if
+ * the host shape changes, update both (and the `assertQuota` validator, which
+ * is what actually rejects a mismatch at runtime).
+ */
 export interface NeuralwattQuotas {
   snapshot_at: string
   balance: {

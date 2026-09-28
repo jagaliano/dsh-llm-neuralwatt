@@ -43,9 +43,10 @@ export interface VolatileRef<T> {
  *
  * `.volatile()` is a schemastery 3.18.3+ feature and the host line this plugin
  * targets (`dsh 0.1.7-rc.2`) pins `~3.18.4`, so the method is always present
- * at runtime. It is reached through a structural member rather than
- * schemastery's own typing because that typing does not declare it — which is
- * also what lets this function preserve the caller's declared field type, so
+ * at runtime. It is reached through a structural member because schemastery
+ * types it as changing the schema's `Mode` generic
+ * (`Schema<S, T, 'volatile'>`), which is not assignable to the caller's
+ * declared field type — the cast is what preserves that declared type, so
  * {@link Config} stays the plain shape every consumer reads.
  * @param schema - the field schema.
  * @returns the same schema carrying `meta.volatile`.

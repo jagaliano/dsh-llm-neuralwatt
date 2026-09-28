@@ -311,25 +311,41 @@ export function normalizeBaseUrl(raw: string): string {
   } catch {
     throw new Error(`${PKG}: baseURL is not a valid URL (got: ${raw.trim()})`)
   }
-  const path = url.pathname
+  // Reject embedded credentials here, at the resolve step, with a message that
+  // names the setting: `fetch` refuses a userinfo URL outright, so allowing one
+  // through would surface as an opaque `TypeError` on every chat, discovery, and
+  // quota request.
+  if (url.username !== '' || url.password !== '') {
+    // Redact before reporting: this message (and the TRANSPORT errors that carry
+    // `baseURL`) must never echo the plaintext secret the user just typed.
+    url.username = ''
+    url.password = ''
+    throw new Error(`${PKG}: baseURL must not contain credentials; store the API key on the Models page instead (got: ${url.toString().replace(/\/+$/, '')})`)
+  }
+  // Drop query and fragment BEFORE inspecting the path. Every consumer appends a
+  // path to the result, and appending to a value that still carried a query
+  // would put the appended segment INSIDE the query
+  // (`/v1?x=1/models` requests `/v1`, not `/v1/models`). A base URL has no
+  // meaningful query or fragment.
+  url.search = ''
+  url.hash = ''
+  // Strip trailing slashes from the PATH, not from the raw string: the raw-string
+  // strip above cannot see a slash that precedes a query or fragment
+  // (`.../chat/completions/?x=1` ends in `1`), which would leave `pathname` as
+  // `/v1/chat/completions/`, defeat the suffix match below, and re-append into
+  // `/chat/completions/models`.
+  const path = url.pathname.replace(/\/+$/, '')
   // `.../v1/chat/completions` (or `/chat/completions`) is the request endpoint;
   // every consumer below appends its own path, so strip the trailing pair of
-  // segments. `pathname` never carries a trailing slash unless one was typed, so
-  // match at end-of-path only — that boundary is what leaves a proxy path which
-  // merely contains the words (`/proxy/chat/completions/v1`) untouched.
+  // segments. Match at end-of-path only — that boundary is what leaves a proxy
+  // path which merely contains the words (`/proxy/chat/completions/v1`)
+  // untouched.
   const stripped = path.replace(/(?:\/chat\/completions){1,2}$/i, '')
   // A value that is ONLY the chat path reduces to its origin root: the user named
   // `<origin>/chat/completions`, so `<origin>` is the root they meant.
   // `URL` renders an origin-level path as `/`, which the trailing-slash strip
   // below removes for consistency.
   url.pathname = stripped === '' ? '/' : stripped
-  // Always drop the query and fragment, even when no chat suffix was present:
-  // every consumer appends a path to the result, and appending to a value with a
-  // query would put the appended segment INSIDE the query
-  // (`/v1?x=1/models` requests `/v1`, not `/v1/models`). A base URL has no
-  // meaningful query or fragment.
-  url.search = ''
-  url.hash = ''
   const normalized = url.toString().replace(/\/+$/, '')
   return normalized.endsWith('/') ? normalized.slice(0, -1) : normalized
 }
