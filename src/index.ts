@@ -46,6 +46,7 @@ import type {
 import type { ModelsDevParamsRequest, ProviderHints } from "./types.ts";
 import { fetchQuotas } from "./quota.ts";
 import { markVolatileFields, unwrapVolatileConfig } from "./config-volatile.ts";
+import { BASE_URL_PATTERN } from "./url-shape.ts";
 import type { HostConnectionHandle } from "@deepseek-ai/dsh-client-connection";
 
 export {
@@ -60,6 +61,13 @@ export {
   PKG,
 } from "./adapter.ts";
 export { serializeRequest } from "./serialize.ts";
+export {
+  BASE_URL_PATTERN,
+  classifyBaseUrl,
+  hasDotSegment,
+  typedHostOf,
+} from "./url-shape.ts";
+export type { BaseUrlProblem } from "./url-shape.ts";
 export {
   isVolatileRef,
   markVolatile,
@@ -165,39 +173,6 @@ const API_KEY_REF = "neuralwatt";
 const BASE_URL_ENV = "NEURALWATT_BASE_URL";
 /** Gateway base used when neither config nor environment names one. */
 export const DEFAULT_BASE_URL = "https://api.neuralwatt.com/v1/chat/completions";
-/**
- * Shape every `baseURL` must have before it is persisted: an http(s) scheme
- * followed by a reachable authority and no credentials.
- *
- * The pattern is deliberately a strict SUBSET of what {@link normalizeBaseUrl}
- * accepts, so anything that passes here also survives normalization at request
- * time. A pattern that admitted more would let an unnormalizable value store
- * cleanly, then throw inside `resolveAdapterOptions`, where `options()` would
- * swallow it and keep serving the previous endpoint while the settings page
- * showed the new one. That failure is silent, so the guard has to be exact.
- *
- * The host alternatives mirror the WHATWG URL parser rather than being loose:
- * a bracketed literal must look like IPv6 (two colons, a hex digit, and no
- * `%` zone — the parser rejects zones and bare `[9]`), a dotted-quad must have
- * four in-range octets, and a name's final label must contain a letter, because
- * a trailing all-numeric label makes the parser treat the host as IPv4 and
- * either throw or silently rewrite it (`https://9` becomes `0.0.0.9`). The port
- * is bounded to 0-65535, matching the parser. `[^/\s@]` no longer appears: its
- * `@` exclusion was the only thing refusing userinfo, and it is now refused by
- * every alternative requiring a valid host start.
- */
-const URL_OCTET = String.raw`(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)`;
-const URL_IPV4 = String.raw`(?:${URL_OCTET}\.){3}${URL_OCTET}`;
-const URL_IPV6 =
-  String.raw`\[(?=[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*:)(?=[0-9A-Fa-f:.]*[0-9A-Fa-f])[0-9A-Fa-f:.]+?\]`;
-const URL_HOSTNAME =
-  String.raw`(?:[\p{L}\p{N}_~-]+\.)*[\p{L}_~-]*\p{L}[\p{L}\p{N}_~-]*`;
-const URL_PORT =
-  String.raw`(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?`;
-const BASE_URL_PATTERN = new RegExp(
-  `^https?://(?:${URL_IPV6}|${URL_IPV4}|${URL_HOSTNAME})${URL_PORT}(?:/|\\s*$)`,
-  "iu",
-);
 /** The single provider route this plugin owns. */
 const PROVIDER = "neuralwatt";
 
@@ -341,8 +316,8 @@ export const Config: z<Config> = z.object(
       .default(DEFAULT_STREAM_IDLE_TIMEOUT_MS),
     proxy: proxySchema.default({ enabled: false, url: DEFAULT_PROXY_URL }),
     providerHints: z.object({
-      defaults: z.object({}),
-      models: z.object({}),
+      defaults: z.dict(z.string()),
+      models: z.dict(z.string()),
     }),
     retryPolicy: RetryPolicySchema,
   }),

@@ -24,6 +24,7 @@ import type {
   CredentialInfo,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { classifyBaseUrl } from '../url-shape.ts'
 import type { ModelsDevParamsRequest, ModelsDevParamsResponse } from './params-types.ts'
 import type { NeuralwattQuotas } from './quota-types.ts'
 
@@ -347,41 +348,19 @@ export function NeuralwattSection(props: NeuralwattSectionProps): ReactNode {
   /**
    * Refuse the save with a localized message when the endpoint cannot work.
    *
-   * This is the *friendly* layer, not the authoritative one: the settings
-   * schema carries the same rule and is enforced by `resolveConfig` on every
-   * write, so a value that slips past here is still refused — just with the
-   * schema's raw message instead of a localized one. Keeping the two in step
-   * is what makes the common mistakes readable.
+   * This classification is the SAME predicate the host schema enforces
+   * ({@link classifyBaseUrl}), so the two layers agree by construction: no
+   * shape is accepted here only to be refused by `resolveConfig` with
+   * schemastery's raw `$.baseURL expect string to match regexp …` text, and none
+   * is refused here only to be stored and then fail at request time.
    *
    * An unusable value must not be persisted: `options()` swallows a resolve
    * failure and keeps serving the previous endpoint, so a stored-but-broken
    * URL would leave the adapter talking to the old host while the page showed
    * the new one.
    */
-  const baseUrlProblem = (): string | undefined => {
-    const candidate = baseURL.trim()
-    if (candidate.length === 0) return undefined
-    let parsed: URL
-    try {
-      parsed = new URL(candidate)
-    } catch {
-      return t('baseUrlInvalid')
-    }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return t('baseUrlInvalid')
-    if (parsed.username !== '' || parsed.password !== '') return t('baseUrlInvalid')
-    // `URL` guesses a host's form and can rewrite it: `https://9` becomes
-    // `0.0.0.9` and `0x7f.1` becomes `127.0.0.1`. The API key would then go to
-    // a host the user never named, so refuse a dotted quad they did not type.
-    const typedHost = candidate
-      .replace(/^https?:\/\//i, '')
-      .split(/[/?#]/, 1)[0]!
-      .replace(/^.*@/, '')
-      .replace(/:\d*$/, '')
-    if (/^\d+\.\d+\.\d+\.\d+$/.test(parsed.hostname) && typedHost !== parsed.hostname) {
-      return t('baseUrlInvalid')
-    }
-    return undefined
-  }
+  const baseUrlProblem = (): string | undefined =>
+    classifyBaseUrl(baseURL) === undefined ? undefined : t('baseUrlInvalid')
 
   const save = async (): Promise<void> => {
     const problem = catalogProblem() ?? baseUrlProblem()

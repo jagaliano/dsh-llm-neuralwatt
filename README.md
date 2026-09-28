@@ -79,14 +79,18 @@ rejected; put the API key on the Models page instead. Ambiguous spellings the
 URL parser would silently rewrite are refused too: `https://9` would become
 `0.0.0.9`, `https://1.2.3` would become `1.2.0.3`, and `0x7f.1` would become
 `127.0.0.1`. Accepting one of those would send your API key to a host you never
-named.
+named. A path segment of `.` or `..` is refused as well, because the URL parser
+resolves it before anything else runs and would move the request root — and the
+API key with it — somewhere you did not type. Percent-encoded separators are
+refused for the same reason: `…/v1/chat/completions%2F` never matches the
+suffix strip and would silently re-append the chat path.
 
-The check runs in two layers: the settings schema rejects the value on save, and
-`normalizeBaseUrl` refuses the same shapes again at request time, so a value
-that arrives from a hand-edited profile or `$NEURALWATT_BASE_URL` cannot bypass
-it. This matters because a value accepted but unusable at request time would
-leave the adapter serving the *previous* endpoint while the page displayed the
-new one.
+The check runs in two layers driven by one shared predicate, so they cannot
+disagree: the settings schema rejects the value on save, and `normalizeBaseUrl`
+refuses the same shapes again at request time, so a value that arrives from a
+hand-edited profile or `$NEURALWATT_BASE_URL` cannot bypass it. This matters
+because a value accepted but unusable at request time would leave the adapter
+serving the *previous* endpoint while the page displayed the new one.
 
 ## Quota reporting
 

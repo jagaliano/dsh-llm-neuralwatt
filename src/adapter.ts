@@ -37,6 +37,7 @@ import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { idleWatchdog, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import { fetch as undiciFetch, ProxyAgent } from 'undici'
 import { serializeRequest } from './serialize.ts'
+import { hasDotSegment, typedHostOf } from './url-shape.ts'
 import { parseSse } from './sse.ts'
 import { translate } from './translate.ts'
 import type {
@@ -337,16 +338,30 @@ export function normalizeBaseUrl(raw: string): string {
   // accepted rewrite would send the API key to a host the user never named.
   // Reject only when the parser produced a dotted quad the user did not literally
   // type; equivalent IPv6 spellings (e.g. `[::ffff:1.2.3.4]`) are left alone.
-  const authority = base.replace(/^https?:\/\//i, '').split(/[/?#]/, 1)[0] ?? '';
-  const typedHost = authority.replace(/^.*@/, '').replace(/:\d*$/, '');
   const parsedHost = url.hostname;
   if (
     /^\d+\.\d+\.\d+\.\d+$/.test(parsedHost) &&
-    typedHost !== parsedHost
+    typedHostOf(base) !== parsedHost
   ) {
     throw new Error(
       `${PKG}: baseURL host is ambiguous and would be rewritten to ${parsedHost} (got: ${raw.trim()}); write a hostname or a plain dotted-quad address`,
     )
+  }
+  // `URL` resolves dot segments at parse time, before this code can see them, so
+  // `https://api.neuralwatt.com/v1/chat/completions/../../../evil` silently
+  // becomes `https://api.neuralwatt.com/evil` and every appended path — including
+  // the one that carries the API key — lands outside the root the user named.
+  // Check the raw text, since the parsed pathname has already lost the segments.
+  if (hasDotSegment(base)) {
+    throw new Error(`${PKG}: baseURL must not contain "." or ".." path segments (got: ${raw.trim()}); they move the request root away from the endpoint you named`)
+  }
+  // A percent-encoded separator defeats the suffix strip below: `new URL()` keeps
+  // `%2F` encoded, so `.../v1/chat/completions%2F` never matches the literal
+  // `/chat/completions` and the appended path becomes
+  // `/chat/completions%2F/chat/completions` — a 404 that reads as a gateway
+  // outage rather than a bad setting.
+  if (/%2f/i.test(url.pathname)) {
+    throw new Error(`${PKG}: baseURL path must not contain a percent-encoded "/" (got: ${raw.trim()}); write the path with plain slashes`)
   }
   // Drop query and fragment BEFORE inspecting the path. Every consumer appends a
   // path to the result, and appending to a value that still carried a query

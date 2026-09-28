@@ -21,6 +21,8 @@ import type { NeuralwattCatalogModel, NeuralwattConnectionOptions } from "./adap
 import type { ProviderHints } from "./types.ts";
 export { DEFAULT_CONTEXT_WINDOW, DEFAULT_MODEL_EXCLUDE_PATTERNS, DEFAULT_PROVIDER_HINTS, DEFAULT_STREAM_IDLE_TIMEOUT_MS, matchModelsDev, modelNameFromId, NeuralwattAdapter, normalizeBaseUrl, PKG, } from "./adapter.ts";
 export { serializeRequest } from "./serialize.ts";
+export { BASE_URL_PATTERN, classifyBaseUrl, hasDotSegment, typedHostOf, } from "./url-shape.ts";
+export type { BaseUrlProblem } from "./url-shape.ts";
 export { isVolatileRef, markVolatile, markVolatileFields, unwrapVolatileConfig, } from "./config-volatile.ts";
 export type { VolatileRef } from "./config-volatile.ts";
 export type { NeuralwattAdapterOptions, NeuralwattCatalogModel, NeuralwattConnectionOptions, } from "./adapter.ts";
