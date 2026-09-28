@@ -28,20 +28,23 @@ export type * from "./types.ts";
 export declare const name = "llm-neuralwatt";
 export declare const inject: string[];
 /** Gateway base used when neither config nor environment names one. */
-export declare const DEFAULT_BASE_URL = "https://api.neuralwatt.com/v1";
+export declare const DEFAULT_BASE_URL = "https://api.neuralwatt.com/v1/chat/completions";
 /**
  * Plugin config, validated by the same-named schemastery schema and doubling
  * as the `llm-neuralwatt` settings-section shape. Every field is optional in
  * yml: `baseURL` falls back to $NEURALWATT_BASE_URL from a trusted environment
- * layer, then to {@link DEFAULT_BASE_URL}, the public Neuralwatt gateway, so an
- * unconfigured install talks to the real service as soon as a key is stored.
+ * layer, then to {@link DEFAULT_BASE_URL}, the public Neuralwatt
+ * chat-completions endpoint, so an unconfigured install talks to the real
+ * service as soon as a key is stored. The setting stays fully editable: any
+ * endpoint or bare API root is accepted, and the chat suffix is stripped at
+ * {@link normalizeBaseUrl} so discovery and quota land on the same host.
  * The API key is not a config value at all: it lives in the
  * credentials store under the fixed reference `neuralwatt` (the web settings
  * page writes it), and a request without any stored key fails with
  * `MISSING_CREDENTIAL`, not at plugin load.
  */
 export interface Config {
-    /** Gateway base including the `/v1` prefix; defaults to $NEURALWATT_BASE_URL from a trusted layer, then `https://api.neuralwatt.com/v1`. */
+    /** Chat-completions endpoint; defaults to $NEURALWATT_BASE_URL from a trusted layer, then `https://api.neuralwatt.com/v1/chat/completions`. A bare API root is equally accepted — the chat suffix is stripped and re-appended per call. */
     baseURL?: string;
     /**
      * The fixed credential reference exposed to the shared Models page. This is

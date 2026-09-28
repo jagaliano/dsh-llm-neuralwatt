@@ -54,7 +54,7 @@ export interface NeuralwattCatalogModel {
  * makes a configuration change reach the next request without re-registration.
  */
 export interface NeuralwattConnectionOptions {
-    /** Gateway base including the `/v1` prefix; `/chat/completions` and `/models` are appended. */
+    /** Gateway API root including the `/v1` prefix; `/chat/completions`, `/models`, and `/quota` are appended. */
     baseURL: string;
     /**
      * Credential reference of this same resolution, resolved per request.
@@ -137,11 +137,14 @@ export declare const DEFAULT_PROVIDER_HINTS: Readonly<ProviderHints>;
 export declare function matchModelsDev(api: ModelsDevApi, id: string, hints?: ProviderHints): ModelsDevMatch[];
 /**
  * Normalize a user-supplied gateway base: trim, drop trailing slashes, and
- * require an absolute http(s) URL. Failing here — at the explicit resolve
- * step — names the setting to fix instead of surfacing later as an opaque
- * fetch failure.
- * @param raw - the configured or drafted base URL.
- * @returns the normalized base with no trailing slash.
+ * require an absolute http(s) URL. A full chat-completions URL is accepted and
+ * reduced to its API root, because the setting reads as an endpoint while the
+ * adapter builds several paths from it (`/chat/completions`, `/models`,
+ * `/quota`); accepting only the root would silently post the other two to the
+ * wrong place. Failing here — at the explicit resolve step — names the setting
+ * to fix instead of surfacing later as an opaque fetch failure.
+ * @param raw - the configured or drafted base URL, with or without a chat path.
+ * @returns the normalized API root with no trailing slash.
  */
 export declare function normalizeBaseUrl(raw: string): string;
 /**

@@ -4,7 +4,7 @@ Native DeepSeek Harness (DSH) plugin for the Neuralwatt OpenAI-compatible API.
 
 ## Features
 
-- `neuralwatt` provider at `https://api.neuralwatt.com/v1`
+- `neuralwatt` provider defaulting to the public gateway at `https://api.neuralwatt.com/v1/chat/completions` (fully editable; a bare `/v1` root is accepted too)
 - Secure, write-only API-key storage through DSH credentials
 - Chat-completions streaming, tool calls, and model discovery
 - Web Settings page for credentials and model catalog management
