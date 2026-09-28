@@ -163,7 +163,7 @@ const NS = "llm-neuralwatt";
 const API_KEY_REF = "neuralwatt";
 /** Environment variable naming this provider's endpoint, honored only from trusted layers. */
 const BASE_URL_ENV = "NEURALWATT_BASE_URL";
-/** Placeholder gateway base used when neither config nor environment names one. */
+/** Gateway base used when neither config nor environment names one. */
 export const DEFAULT_BASE_URL = "https://api.neuralwatt.com/v1";
 /** The single provider route this plugin owns. */
 const PROVIDER = "neuralwatt";
@@ -172,15 +172,15 @@ const PROVIDER = "neuralwatt";
  * Plugin config, validated by the same-named schemastery schema and doubling
  * as the `llm-neuralwatt` settings-section shape. Every field is optional in
  * yml: `baseURL` falls back to $NEURALWATT_BASE_URL from a trusted environment
- * layer, then the placeholder {@link DEFAULT_BASE_URL} — a request against
- * the placeholder fails as TRANSPORT at first use, naming the endpoint to
- * fix. The API key is not a config value at all: it lives in the
+ * layer, then to {@link DEFAULT_BASE_URL}, the public Neuralwatt gateway, so an
+ * unconfigured install talks to the real service as soon as a key is stored.
+ * The API key is not a config value at all: it lives in the
  * credentials store under the fixed reference `neuralwatt` (the web settings
  * page writes it), and a request without any stored key fails with
  * `MISSING_CREDENTIAL`, not at plugin load.
  */
 export interface Config {
-  /** Gateway base including the `/v1` prefix; defaults to $NEURALWATT_BASE_URL from a trusted layer, then the placeholder `https://neuralwatt.example.com/v1`. */
+  /** Gateway base including the `/v1` prefix; defaults to $NEURALWATT_BASE_URL from a trusted layer, then `https://api.neuralwatt.com/v1`. */
   baseURL?: string;
   /**
    * The fixed credential reference exposed to the shared Models page. This is
@@ -265,7 +265,7 @@ const proxySchema: z<ProxyConfig> = z.object({
  */
 export const Config: z<Config> = z.object(
   markVolatileFields({
-    baseURL: z.string(),
+    baseURL: z.string().default(DEFAULT_BASE_URL),
     // `ui-settings-models` reads this conventional field to join a provider
     // with `credentials.describe()`. Keep it aligned with API_KEY_REF, which
     // remains the only credential reference the adapter and dedicated page
@@ -383,11 +383,9 @@ export function resolveAdapterOptions(
   config: Config,
   environment?: ReturnType<typeof launchEnvironmentOf>,
 ): ResolvedNeuralwattOptions {
-  // Absent everywhere is the placeholder, not a load failure: the plugin stays
-  // mountable so configuration surfaces can offer the route, and a request
-  // against the placeholder fails as TRANSPORT at first use, naming the
-  // endpoint to fix. A value someone actually typed must still be a usable
-  // http(s) URL, which normalizeBaseUrl enforces below.
+  // Absent everywhere falls back to {@link DEFAULT_BASE_URL} below. A value
+  // someone actually typed must still be a usable http(s) URL, which
+  // normalizeBaseUrl enforces below.
   const named =
     config.baseURL !== undefined && config.baseURL.trim().length > 0
       ? config.baseURL
