@@ -47,6 +47,24 @@ plugin declares as a peer to the host installation's copy, so the plugin's own
 
 Restart DSH Web, then open **Settings → Neuralwatt**, save an API key, fetch models, and select a Neuralwatt model.
 
+## Configuring the endpoint
+
+`baseURL` defaults to `https://api.neuralwatt.com/v1/chat/completions` and is
+fully editable in the settings page, in `cordis.patch.yml`, or through
+`$NEURALWATT_BASE_URL` from a trusted environment layer (a saved value beats the
+environment, which beats the default). Both forms are accepted and resolve to
+the same host:
+
+| Value | Chat | Discovery | Quota |
+| --- | --- | --- | --- |
+| `https://api.neuralwatt.com/v1/chat/completions` | `/v1/chat/completions` | `/v1/models` | `/v1/quota` |
+| `https://api.neuralwatt.com/v1` | `/v1/chat/completions` | `/v1/models` | `/v1/quota` |
+
+A trailing `/chat/completions` is stripped case-insensitively (and a query
+string or fragment is dropped) before those paths are appended, so a full
+endpoint never turns into `/chat/completions/models`. A path that merely
+contains those words, such as a reverse-proxy prefix, is left untouched.
+
 ## Quota reporting
 
 The quota panel calls the provider's authenticated `/v1/quota` endpoint. It uses the same response semantics as the Pi extension: balance, subscription/energy quota, monthly usage, limits, and key allowance. The adapter is configured for `openai-completions`; Neuralwatt compatibility defaults use `max_tokens` and avoid the developer role.
