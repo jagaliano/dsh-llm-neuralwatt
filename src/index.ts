@@ -268,7 +268,12 @@ const proxySchema: z<ProxyConfig> = z.object({
  */
 export const Config: z<Config> = z.object(
   markVolatileFields({
-    baseURL: z.string().default(DEFAULT_BASE_URL),
+    // The settings form renders a text box for this field, so the description
+    // is the only place a user learns that both the full chat endpoint and the
+    // bare API root are accepted — and that the value is not the final URL the
+    // adapter fetches for anything but chat.
+    baseURL: z.string().default(DEFAULT_BASE_URL)
+      .description("Gateway endpoint. Accepts the full chat-completions URL or the bare /v1 API root; a trailing /chat/completions is stripped before /models and /quota are appended."),
     // `ui-settings-models` reads this conventional field to join a provider
     // with `credentials.describe()`. Keep it aligned with API_KEY_REF, which
     // remains the only credential reference the adapter and dedicated page
