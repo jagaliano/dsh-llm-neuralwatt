@@ -165,6 +165,14 @@ const API_KEY_REF = "neuralwatt";
 const BASE_URL_ENV = "NEURALWATT_BASE_URL";
 /** Gateway base used when neither config nor environment names one. */
 export const DEFAULT_BASE_URL = "https://api.neuralwatt.com/v1/chat/completions";
+/**
+ * Shape every `baseURL` must have before it is persisted: an http(s) scheme
+ * followed by an authority, and no credentials. Kept deliberately loose about
+ * the path — {@link normalizeBaseUrl} owns what the value means, and this only
+ * rejects what could never become a fetchable endpoint. The `@` exclusion is
+ * what refuses userinfo (`https://user:pass@host`), which `fetch` rejects.
+ */
+const BASE_URL_PATTERN = /^https?:\/\/[^/\s@]+(?:\/|$)/iu;
 /** The single provider route this plugin owns. */
 const PROVIDER = "neuralwatt";
 
@@ -186,9 +194,12 @@ export interface Config {
   /** Chat-completions endpoint; defaults to $NEURALWATT_BASE_URL from a trusted layer, then `https://api.neuralwatt.com/v1/chat/completions`. A bare API root is equally accepted — the chat suffix is stripped and re-appended per call. */
   baseURL?: string;
   /**
-   * The fixed credential reference exposed to the shared Models page. This is
-   * not user-configurable: it mirrors the `neuralwatt` reference resolved by
-   * the adapter so the page can render its standard red/green credential dot.
+   * Credential reference the adapter and the shared Models page both resolve
+   * the API key through. Defaults to the `neuralwatt` route reference; the
+   * generic Models page reads this conventional field to join the provider
+   * with `credentials.describe()`, so it can render its credential dot. It is
+   * not an editable input on the dedicated Neuralwatt page, but a profile that
+   * sets it in `cordis.patch.yml` does get the credential it names.
    */
   apiKeyEnv?: string;
   /** Advisory models shown by discovery consumers; defaults to none — a gateway's model set is deployment-specific. */
@@ -272,7 +283,15 @@ export const Config: z<Config> = z.object(
     // is the only place a user learns that both the full chat endpoint and the
     // bare API root are accepted — and that the value is not the final URL the
     // adapter fetches for anything but chat.
-    baseURL: z.string().default(DEFAULT_BASE_URL)
+    //
+    // The pattern is load-bearing, not cosmetic: schemastery enforces it at
+    // `resolveConfig`, which is what the settings write path runs before it
+    // persists. Without it an unusable value (`ftp://…`, `https://`, embedded
+    // credentials) would store fine, then throw inside `resolveAdapterOptions`,
+    // where `options()` swallows the error and keeps serving the PREVIOUS
+    // endpoint forever — the page would show the new value while every request
+    // quietly used the old one. Rejecting at the write is what surfaces it.
+    baseURL: z.string().pattern(BASE_URL_PATTERN).default(DEFAULT_BASE_URL)
       .description("Gateway endpoint. Accepts the full chat-completions URL or the bare /v1 API root; a trailing /chat/completions is stripped before /models and /quota are appended."),
     // `ui-settings-models` reads this conventional field to join a provider
     // with `credentials.describe()`. Keep it aligned with API_KEY_REF, which
@@ -462,9 +481,25 @@ export function resolveAdapterOptions(
       );
     }
   }
+  // Derive the reference from the field rather than hardcoding it, matching the
+  // host's own convention (`credentialRef(config.apiKeyEnv ?? …)`). The field
+  // defaults to API_KEY_REF and is not surfaced as an editable input, but
+  // reading it here keeps the declared field honest: a profile that sets it in
+  // `cordis.patch.yml` actually gets the credential it names. `credentialRef`
+  // itself rejects a name that is not a shell-style identifier; re-word that
+  // TypeError so the failure names the field the user must fix.
+  const apiKeyEnv = config.apiKeyEnv?.trim() || API_KEY_REF;
+  let apiKeyRef: ResolvedNeuralwattOptions["apiKeyRef"];
+  try {
+    apiKeyRef = credentialRef(apiKeyEnv);
+  } catch {
+    throw new Error(
+      `${PKG}: apiKeyEnv must be an identifier such as ${API_KEY_REF} (got: ${JSON.stringify(apiKeyEnv)})`,
+    );
+  }
   return {
     baseURL: normalizeBaseUrl(rawBase),
-    apiKeyRef: credentialRef(API_KEY_REF),
+    apiKeyRef,
     models: resolveModels(config.models),
     modelExcludePatterns,
     defaultContextWindow,
@@ -490,19 +525,37 @@ export function apply(ctx: Context, config: Config): void {
   // values move.
   const current: () => Config = () => unwrapVolatileConfig(config);
   let lastGood: ResolvedNeuralwattOptions | undefined;
+  // The last failing snapshot we already reported, as a stable string. Without
+  // this the catch below would log twice on EVERY read while a bad value stayed
+  // saved — `options()` runs per request and per model call, so that is log
+  // spam, not the "once per bad snapshot" the message promises.
+  let reportedBadSnapshot: string | undefined;
   const options = (): ResolvedNeuralwattOptions => {
+    const snapshot = current();
     try {
-      lastGood = resolveAdapterOptions(current(), launchEnvironmentOf(ctx));
+      lastGood = resolveAdapterOptions(snapshot, launchEnvironmentOf(ctx));
+      reportedBadSnapshot = undefined;
       return lastGood;
     } catch (error) {
       // Static composition resolves before anything registers, so this branch
       // only sees a live settings snapshot failing a beyond-schema bound:
       // keep serving the last good facts and say so once per bad snapshot.
       if (lastGood === undefined) throw error;
-      ctx.logger.error(
-        `${PKG}: keeping the last good configuration after an invalid config`,
-      );
-      ctx.logger.error(error);
+      let marker: string;
+      try {
+        // Safe by construction: this is the value that just failed to resolve,
+        // so it holds only schema-validated primitives and plain objects.
+        marker = JSON.stringify(snapshot);
+      } catch {
+        marker = String(error);
+      }
+      if (marker !== reportedBadSnapshot) {
+        reportedBadSnapshot = marker;
+        ctx.logger.error(
+          `${PKG}: keeping the last good configuration after an invalid config`,
+        );
+        ctx.logger.error(error);
+      }
       return lastGood;
     }
   };
@@ -534,7 +587,15 @@ export function apply(ctx: Context, config: Config): void {
   // registered on ctx.llm (the built-in catalogs are the authority — e.g.
   // deepseek-v4-flash under the deepseek route). Rebuilt when the set of
   // routes changes; a route that fails to list models is no authority.
-  let indexCache: { routes: string; byModel: Map<string, string> } | undefined;
+  //
+  // The route set alone is not enough to detect a change: a route can keep its
+  // id while its model list moves (a catalog edit, a reloaded plugin), and
+  // keying on ids alone would then serve the old index indefinitely. The TTL
+  // bounds that staleness without rebuilding the index on every lookup.
+  const OFFICIAL_INDEX_TTL_MS = 60_000;
+  let indexCache:
+    | { routes: string; byModel: Map<string, string>; at: number }
+    | undefined;
   const officialProviderOf = async (
     modelId: string,
   ): Promise<string | undefined> => {
@@ -543,7 +604,11 @@ export function apply(ctx: Context, config: Config): void {
       .map((provider) => provider.id)
       .sort()
       .join(",");
-    if (indexCache === undefined || indexCache.routes !== routes) {
+    if (
+      indexCache === undefined ||
+      indexCache.routes !== routes ||
+      Date.now() - indexCache.at >= OFFICIAL_INDEX_TTL_MS
+    ) {
       const byModel = new Map<string, string>();
       for (const provider of ctx.llm.listProviders()) {
         if (provider.id === PROVIDER) continue;
@@ -555,7 +620,7 @@ export function apply(ctx: Context, config: Config): void {
           // An unlistable route contributes nothing; other routes still can.
         }
       }
-      indexCache = { routes, byModel };
+      indexCache = { routes, byModel, at: Date.now() };
     }
     return indexCache.byModel.get(modelId);
   };

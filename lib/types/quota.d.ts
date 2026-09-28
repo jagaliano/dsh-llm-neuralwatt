@@ -45,15 +45,4 @@ export interface NeuralwattKeyAllowance {
     remaining_usd: number;
     blocked: boolean;
 }
-export interface NeuralwattHeaderQuota {
-    allowanceRemainingUsd: number;
-    budgetRemainingUsd: number;
-    requestCostUsd: number;
-    cacheSavingsUsd: number;
-    subscriptionPlan: string;
-    energyIncluded?: number;
-    energyRemaining?: number;
-    energyUsed?: number;
-}
-export declare function parseQuotaHeaders(headers: Headers): NeuralwattHeaderQuota | undefined;
 export declare function fetchQuotas(baseURL: string, apiKey: string, signal: AbortSignal): Promise<NeuralwattQuotas>;

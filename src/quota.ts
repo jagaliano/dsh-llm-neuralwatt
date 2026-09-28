@@ -12,29 +12,6 @@ export interface NeuralwattQuotas {
 export interface QuotaUsage { cost_usd: number; requests: number; tokens: number; energy_kwh: number }
 export interface NeuralwattSubscription { plan: string; status: string; billing_interval: string; current_period_start: string; current_period_end: string; auto_renew: boolean; kwh_included: number; kwh_used: number; kwh_remaining: number; in_overage: boolean }
 export interface NeuralwattKeyAllowance { limit_usd: number; period: string; spent_usd: number; remaining_usd: number; blocked: boolean }
-export interface NeuralwattHeaderQuota { allowanceRemainingUsd: number; budgetRemainingUsd: number; requestCostUsd: number; cacheSavingsUsd: number; subscriptionPlan: string; energyIncluded?: number; energyRemaining?: number; energyUsed?: number }
-
-export function parseQuotaHeaders(headers: Headers): NeuralwattHeaderQuota | undefined {
-  const remaining = headers.get('x-allowance-remaining-usd')
-  if (remaining === null) return undefined
-  const parse = (value: string | null): number | undefined => {
-    const parsed = value === null ? Number.NaN : Number.parseFloat(value)
-    return Number.isFinite(parsed) ? parsed : undefined
-  }
-  const energyIncluded = parse(headers.get('x-energy-included'))
-  const energyRemaining = parse(headers.get('x-energy-remaining'))
-  const energyUsed = parse(headers.get('x-energy-used'))
-  return {
-    allowanceRemainingUsd: parse(remaining) ?? 0,
-    budgetRemainingUsd: parse(headers.get('x-budget-remaining-usd')) ?? 0,
-    requestCostUsd: parse(headers.get('x-request-cost-usd')) ?? 0,
-    cacheSavingsUsd: parse(headers.get('x-cache-savings-usd')) ?? 0,
-    subscriptionPlan: headers.get('x-subscription-plan') ?? 'none',
-    ...(energyIncluded === undefined ? {} : { energyIncluded }),
-    ...(energyRemaining === undefined ? {} : { energyRemaining }),
-    ...(energyUsed === undefined ? {} : { energyUsed }),
-  }
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

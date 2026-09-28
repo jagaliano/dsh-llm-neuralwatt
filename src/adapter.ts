@@ -160,6 +160,13 @@ const STREAM_IDLE_TIMEOUT_CODE = 'LLM_STREAM_IDLE_TIMEOUT'
 export const MODELS_DEV_API_URL = 'https://models.dev/api.json'
 /** One-shot download budget for the catalog fetch. */
 const MODELS_DEV_TIMEOUT_MS = 30_000
+/**
+ * Plugin-side ceiling for one gateway model-discovery request. The runtime's
+ * own cancel is not a reliable bound — a gateway that accepts the connection
+ * and then hangs would leave the settings-page discovery pending indefinitely —
+ * so this matches the quota and catalog fetches, which each carry their own.
+ */
+const DISCOVERY_TIMEOUT_MS = 15_000
 
 /**
  * One provider entry from the catalog, narrowed to what the feature fills.
@@ -334,20 +341,27 @@ export function normalizeBaseUrl(raw: string): string {
   // (`.../chat/completions/?x=1` ends in `1`), which would leave `pathname` as
   // `/v1/chat/completions/`, defeat the suffix match below, and re-append into
   // `/chat/completions/models`.
-  const path = url.pathname.replace(/\/+$/, '')
+  let path = url.pathname.replace(/\/+$/, '')
   // `.../v1/chat/completions` (or `/chat/completions`) is the request endpoint;
   // every consumer below appends its own path, so strip the trailing pair of
   // segments. Match at end-of-path only — that boundary is what leaves a proxy
   // path which merely contains the words (`/proxy/chat/completions/v1`)
-  // untouched.
-  const stripped = path.replace(/(?:\/chat\/completions){1,2}$/i, '')
+  // untouched. Loop to a fixed point rather than capping the repetition count:
+  // a fixed cap leaves a suffix behind for a value that repeats it more times
+  // (and makes the function non-idempotent). Each pass removes at least
+  // `/chat/completions`, so this always terminates, and the inner slash strip
+  // handles a suffix the user typed as `…/chat/completions/chat/completions/`.
+  for (;;) {
+    const next = path.replace(/\/chat\/completions$/i, '').replace(/\/+$/, '')
+    if (next === path) break
+    path = next
+  }
   // A value that is ONLY the chat path reduces to its origin root: the user named
   // `<origin>/chat/completions`, so `<origin>` is the root they meant.
   // `URL` renders an origin-level path as `/`, which the trailing-slash strip
   // below removes for consistency.
-  url.pathname = stripped === '' ? '/' : stripped
-  const normalized = url.toString().replace(/\/+$/, '')
-  return normalized.endsWith('/') ? normalized.slice(0, -1) : normalized
+  url.pathname = path === '' ? '/' : path
+  return url.toString().replace(/\/+$/, '')
 }
 
 function modelInfo(provider: string, model: NeuralwattCatalogModel): LlmModelInfo {
@@ -579,7 +593,11 @@ export class NeuralwattAdapter extends LlmAdapter {
           'accept': 'application/json',
           ...attributionHeaders(),
         },
-        ...signal === undefined ? {} : { signal },
+        // Bound the request even when the caller passes no signal (or one it
+        // never aborts); `any` keeps caller cancellation working too.
+        signal: signal === undefined
+          ? AbortSignal.timeout(DISCOVERY_TIMEOUT_MS)
+          : AbortSignal.any([signal, AbortSignal.timeout(DISCOVERY_TIMEOUT_MS)]),
       })
     } catch (error: unknown) {
       if (signal?.aborted) throw error

@@ -64,11 +64,18 @@ A trailing `/chat/completions` is stripped case-insensitively (and a query
 string or fragment is dropped) before those paths are appended, so a full
 endpoint never turns into `/chat/completions/models`. A path that merely
 contains those words, such as a reverse-proxy prefix, is left untouched.
+The strip repeats to a fixed point, so an endpoint that repeats the suffix
+(`…/chat/completions/chat/completions`) still reduces to the API root.
 Trailing slashes are removed from the path itself, so
 `https://host/v1/chat/completions/?x=1` normalizes exactly like the bare
-endpoint. An endpoint carrying embedded credentials (`https://user:pass@host`)
-is rejected with a clear error rather than handed to `fetch`, which refuses
-such URLs — put the API key on the Models page instead.
+endpoint.
+
+An unusable value is refused when you save it, not silently ignored: the field
+must be an `http(s)` URL with a host and no embedded credentials
+(`https://user:pass@host` is rejected — put the API key on the Models page
+instead). This matters because a value accepted here but unusable at request
+time would leave the adapter serving the *previous* endpoint while the page
+displayed the new one.
 
 ## Quota reporting
 

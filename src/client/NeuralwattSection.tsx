@@ -344,8 +344,31 @@ export function NeuralwattSection(props: NeuralwattSectionProps): ReactNode {
     return undefined
   }
 
+  /**
+   * Refuse the save with a localized message when the endpoint cannot work.
+   *
+   * The host schema types `baseURL` as a plain string, so an unusable value
+   * (a non-http scheme, or embedded credentials `fetch` rejects) would be
+   * persisted happily and then fail on every request — where `options()`
+   * swallows it and silently keeps serving the previous endpoint. Rejecting it
+   * here, before the write, is what makes the bad value visible to the user.
+   */
+  const baseUrlProblem = (): string | undefined => {
+    const candidate = baseURL.trim()
+    if (candidate.length === 0) return undefined
+    let parsed: URL
+    try {
+      parsed = new URL(candidate)
+    } catch {
+      return t('baseUrlInvalid')
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return t('baseUrlInvalid')
+    if (parsed.username !== '' || parsed.password !== '') return t('baseUrlInvalid')
+    return undefined
+  }
+
   const save = async (): Promise<void> => {
-    const problem = catalogProblem()
+    const problem = catalogProblem() ?? baseUrlProblem()
     if (problem !== undefined) {
       setErrorText(problem)
       return

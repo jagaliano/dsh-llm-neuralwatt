@@ -47,9 +47,12 @@ export interface Config {
     /** Chat-completions endpoint; defaults to $NEURALWATT_BASE_URL from a trusted layer, then `https://api.neuralwatt.com/v1/chat/completions`. A bare API root is equally accepted — the chat suffix is stripped and re-appended per call. */
     baseURL?: string;
     /**
-     * The fixed credential reference exposed to the shared Models page. This is
-     * not user-configurable: it mirrors the `neuralwatt` reference resolved by
-     * the adapter so the page can render its standard red/green credential dot.
+     * Credential reference the adapter and the shared Models page both resolve
+     * the API key through. Defaults to the `neuralwatt` route reference; the
+     * generic Models page reads this conventional field to join the provider
+     * with `credentials.describe()`, so it can render its credential dot. It is
+     * not an editable input on the dedicated Neuralwatt page, but a profile that
+     * sets it in `cordis.patch.yml` does get the credential it names.
      */
     apiKeyEnv?: string;
     /** Advisory models shown by discovery consumers; defaults to none — a gateway's model set is deployment-specific. */
