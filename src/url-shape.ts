@@ -80,8 +80,12 @@ const PORT =
  * `@` here is what makes the dot-segment rule airtight.
  */
 const SEGMENT = String.raw`/(?!\.{1,2}(?:[/\\?#]|$))[^/\\%?#@\s]+`;
-/** A path of non-empty segments, optionally closed by a single trailing slash. */
-const PATH = String.raw`(?:${SEGMENT})*/?`;
+/**
+ * A path of non-empty segments. Extra trailing slashes are permitted because
+ * the resolver strips every one of them, so `…/v1////` and `…/v1/` are the same
+ * endpoint; empty segments *inside* the path stay refused.
+ */
+const PATH = String.raw`(?:${SEGMENT})*/*`;
 /**
  * A query string and/or fragment. Their content is never used — the resolver
  * clears both before building a request URL — so it is matched loosely. The
