@@ -1,13 +1,16 @@
 /**
  * Register a {@link NeuralwattAdapter} for the `neuralwatt` provider route on
  * `ctx.llm`, with connection facts resolved per request instead of frozen at
- * load: the `llm-neuralwatt` settings form is derived from this module's
- * exported {@link Config} schema by the 0.1.7 settings service, and every
- * accepted write reloads this entry, so a changed base URL, catalog, or retry
- * policy reaches the very next request without restarting anything, while an
- * in-flight stream keeps the facts it started with. The API key resolves
- * through the optional credential seam (`ctx.credentials`). The plugin also serves model discovery for the
- * `llm-neuralwatt` settings namespace by interrogating `GET {baseURL}/models`.
+ * load. The `llm-neuralwatt` namespace is derived from this module's exported
+ * {@link Config} schema: every field is marked volatile, so the 0.1.7 settings
+ * service describes and accepts writes to it, and the loader commits such a
+ * write into the running fiber's live references WITHOUT remounting it. The
+ * plugin therefore reads its config per request, so a changed base URL,
+ * catalog, or retry policy reaches the very next request without restarting
+ * anything, while an in-flight stream keeps the facts it started with. The API
+ * key resolves through the optional credential seam (`ctx.credentials`). The
+ * plugin also serves model discovery for the `llm-neuralwatt` settings
+ * namespace by interrogating `GET {baseURL}/models`.
  * @module dsh-llm-neuralwatt
  */
 import type { Context } from "@deepseek-ai/cordis";
@@ -18,6 +21,8 @@ import type { NeuralwattCatalogModel, NeuralwattConnectionOptions } from "./adap
 import type { ProviderHints } from "./types.ts";
 export { DEFAULT_CONTEXT_WINDOW, DEFAULT_MODEL_EXCLUDE_PATTERNS, DEFAULT_PROVIDER_HINTS, DEFAULT_STREAM_IDLE_TIMEOUT_MS, matchModelsDev, modelNameFromId, NeuralwattAdapter, normalizeBaseUrl, PKG, } from "./adapter.ts";
 export { serializeRequest } from "./serialize.ts";
+export { isVolatileRef, markVolatile, markVolatileFields, unwrapVolatileConfig, } from "./config-volatile.ts";
+export type { VolatileRef } from "./config-volatile.ts";
 export type { NeuralwattAdapterOptions, NeuralwattCatalogModel, NeuralwattConnectionOptions, } from "./adapter.ts";
 export type * from "./types.ts";
 export declare const name = "llm-neuralwatt";
@@ -85,6 +90,22 @@ export interface ProxyConfig {
 }
 /** Default forward proxy: the conventional Clash port on loopback. */
 export declare const DEFAULT_PROXY_URL = "http://127.0.0.1:7890";
+/**
+ * The `llm-neuralwatt` profile Config.
+ *
+ * Every field is marked volatile: on dsh 0.1.7 the settings service projects a
+ * plugin's schema through `volatileForm()`, so a namespace with no marked
+ * field does not appear in `describe()` at all and every write to it is
+ * refused with `has no volatile fields` — which is what makes the dedicated
+ * Neuralwatt section fail to load and save. Marking is also what lets a write
+ * reach the running plugin without remounting it (see the `current()` reader
+ * in {@link apply}).
+ *
+ * Marking changes what the schema parses to — each top-level field becomes a
+ * frozen `{ get() }` reference — so {@link apply} reads through
+ * {@link unwrapVolatileConfig} and {@link resolveAdapterOptions} keeps its
+ * plain signature.
+ */
 export declare const Config: z<Config>;
 /**
  * One resolution's complete request facts. Connection and credential facts

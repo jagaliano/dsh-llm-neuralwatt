@@ -1,13 +1,16 @@
 /**
  * Register a {@link NeuralwattAdapter} for the `neuralwatt` provider route on
  * `ctx.llm`, with connection facts resolved per request instead of frozen at
- * load: the `llm-neuralwatt` settings form is derived from this module's
- * exported {@link Config} schema by the 0.1.7 settings service, and every
- * accepted write reloads this entry, so a changed base URL, catalog, or retry
- * policy reaches the very next request without restarting anything, while an
- * in-flight stream keeps the facts it started with. The API key resolves
- * through the optional credential seam (`ctx.credentials`). The plugin also serves model discovery for the
- * `llm-neuralwatt` settings namespace by interrogating `GET {baseURL}/models`.
+ * load. The `llm-neuralwatt` namespace is derived from this module's exported
+ * {@link Config} schema: every field is marked volatile, so the 0.1.7 settings
+ * service describes and accepts writes to it, and the loader commits such a
+ * write into the running fiber's live references WITHOUT remounting it. The
+ * plugin therefore reads its config per request, so a changed base URL,
+ * catalog, or retry policy reaches the very next request without restarting
+ * anything, while an in-flight stream keeps the facts it started with. The API
+ * key resolves through the optional credential seam (`ctx.credentials`). The
+ * plugin also serves model discovery for the `llm-neuralwatt` settings
+ * namespace by interrogating `GET {baseURL}/models`.
  * @module dsh-llm-neuralwatt
  */
 
@@ -24,6 +27,8 @@ import llmManifest from "@deepseek-ai/dsh-llm/package.json" with {
   type: "json",
 };
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
+// Type-only: pulls the ctx.settings merge (the 0.1.7 schema-derived forms).
+import type {} from "@deepseek-ai/dsh-settings";
 import { launchEnvironmentOf } from "@deepseek-ai/dsh-launch-environment";
 import { MAX_TIMER_DELAY_MS } from "@deepseek-ai/dsh-timeout";
 import {
@@ -40,6 +45,7 @@ import type {
 } from "./adapter.ts";
 import type { ModelsDevParamsRequest, ProviderHints } from "./types.ts";
 import { fetchQuotas } from "./quota.ts";
+import { markVolatileFields, unwrapVolatileConfig } from "./config-volatile.ts";
 import type { HostConnectionHandle } from "@deepseek-ai/dsh-client-connection";
 
 export {
@@ -54,6 +60,13 @@ export {
   PKG,
 } from "./adapter.ts";
 export { serializeRequest } from "./serialize.ts";
+export {
+  isVolatileRef,
+  markVolatile,
+  markVolatileFields,
+  unwrapVolatileConfig,
+} from "./config-volatile.ts";
+export type { VolatileRef } from "./config-volatile.ts";
 export type {
   NeuralwattAdapterOptions,
   NeuralwattCatalogModel,
@@ -234,34 +247,54 @@ const proxySchema: z<ProxyConfig> = z.object({
   url: z.string().default(DEFAULT_PROXY_URL),
 });
 
-export const Config: z<Config> = z.object({
-  baseURL: z.string(),
-  // `ui-settings-models` reads this conventional field to join a provider
-  // with `credentials.describe()`. Keep it aligned with API_KEY_REF, which
-  // remains the only credential reference the adapter and dedicated page use.
-  apiKeyEnv: z.string().default(API_KEY_REF),
-  models: z.array(catalogModel).default([]),
-  modelExcludePatterns: z
-    .array(z.string())
-    .default([...DEFAULT_MODEL_EXCLUDE_PATTERNS]),
-  defaultContextWindow: z
-    .number()
-    .step(1)
-    .min(1)
-    .default(DEFAULT_CONTEXT_WINDOW),
-  maxTokens: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER),
-  streamIdleTimeoutMs: z
-    .number()
-    .min(Number.MIN_VALUE)
-    .max(MAX_TIMER_DELAY_MS)
-    .default(DEFAULT_STREAM_IDLE_TIMEOUT_MS),
-  proxy: proxySchema.default({ enabled: false, url: DEFAULT_PROXY_URL }),
-  providerHints: z.object({
-    defaults: z.object({}),
-    models: z.object({}),
+/**
+ * The `llm-neuralwatt` profile Config.
+ *
+ * Every field is marked volatile: on dsh 0.1.7 the settings service projects a
+ * plugin's schema through `volatileForm()`, so a namespace with no marked
+ * field does not appear in `describe()` at all and every write to it is
+ * refused with `has no volatile fields` — which is what makes the dedicated
+ * Neuralwatt section fail to load and save. Marking is also what lets a write
+ * reach the running plugin without remounting it (see the `current()` reader
+ * in {@link apply}).
+ *
+ * Marking changes what the schema parses to — each top-level field becomes a
+ * frozen `{ get() }` reference — so {@link apply} reads through
+ * {@link unwrapVolatileConfig} and {@link resolveAdapterOptions} keeps its
+ * plain signature.
+ */
+export const Config: z<Config> = z.object(
+  markVolatileFields({
+    baseURL: z.string(),
+    // `ui-settings-models` reads this conventional field to join a provider
+    // with `credentials.describe()`. Keep it aligned with API_KEY_REF, which
+    // remains the only credential reference the adapter and dedicated page
+    // use. The role tells the generic form this is a reference name, not a
+    // secret literal, so it renders the credential affordance.
+    apiKeyEnv: z.string().role('credential-ref').default(API_KEY_REF),
+    models: z.array(catalogModel).default([]),
+    modelExcludePatterns: z
+      .array(z.string())
+      .default([...DEFAULT_MODEL_EXCLUDE_PATTERNS]),
+    defaultContextWindow: z
+      .number()
+      .step(1)
+      .min(1)
+      .default(DEFAULT_CONTEXT_WINDOW),
+    maxTokens: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER),
+    streamIdleTimeoutMs: z
+      .number()
+      .min(Number.MIN_VALUE)
+      .max(MAX_TIMER_DELAY_MS)
+      .default(DEFAULT_STREAM_IDLE_TIMEOUT_MS),
+    proxy: proxySchema.default({ enabled: false, url: DEFAULT_PROXY_URL }),
+    providerHints: z.object({
+      defaults: z.object({}),
+      models: z.object({}),
+    }),
+    retryPolicy: RetryPolicySchema,
   }),
-  retryPolicy: RetryPolicySchema,
-});
+);
 
 /**
  * One resolution's complete request facts. Connection and credential facts
@@ -399,14 +432,15 @@ export function resolveAdapterOptions(
   if (proxyEnabled) {
     // Only judged while enabled: a stored disabled proxy with a stale URL
     // must not fail the whole section.
+    let proxyUrl: URL;
     try {
-      new URL(proxyUrlRaw);
+      proxyUrl = new URL(proxyUrlRaw);
     } catch {
       throw new Error(
         `${PKG}: proxy.url must be an absolute URL (got: ${proxyUrlRaw})`,
       );
     }
-    if (!/^https?:$/.test(new URL(proxyUrlRaw).protocol)) {
+    if (!/^https?:$/.test(proxyUrl.protocol)) {
       throw new Error(
         `${PKG}: proxy.url must be an http(s) URL (got: ${proxyUrlRaw})`,
       );
@@ -430,29 +464,25 @@ export function resolveAdapterOptions(
 }
 
 export function apply(ctx: Context, config: Config): void {
-  // Config arrives whole per fiber: the 0.1.7 settings service derives the
-  // `llm-neuralwatt` form from the exported {@link Config} schema and reloads
-  // this entry on every accepted write, so a changed base URL, catalog, or
-  // retry policy reaches the next request without this plugin tracking a
-  // live section itself. The one registration-captured fact stays capture
-  // time; see {@link ensureRegistrationFacts}.
-  const current: () => Config = () => config;
-  let lastRaw: Config | undefined;
+  // Every top-level Config field is volatile, so at runtime `config` carries
+  // live references rather than plain values. Read them per use: the 0.1.7
+  // loader commits a volatile-only settings write IN PLACE — it does not
+  // remount this fiber and does not re-run `apply` — so a reader that cached
+  // the config, or compared it by identity, would never see a change. Caching
+  // by identity is impossible anyway: unwrap returns a fresh object each call
+  // precisely because the references' identities stay fixed while their
+  // values move.
+  const current: () => Config = () => unwrapVolatileConfig(config);
   let lastGood: ResolvedNeuralwattOptions | undefined;
   const options = (): ResolvedNeuralwattOptions => {
-    const raw = current();
-    if (raw === lastRaw && lastGood !== undefined) return lastGood;
     try {
-      const next = resolveAdapterOptions(raw, launchEnvironmentOf(ctx));
-      lastRaw = raw;
-      lastGood = next;
-      return next;
+      lastGood = resolveAdapterOptions(current(), launchEnvironmentOf(ctx));
+      return lastGood;
     } catch (error) {
       // Static composition resolves before anything registers, so this branch
       // only sees a live settings snapshot failing a beyond-schema bound:
       // keep serving the last good facts and say so once per bad snapshot.
       if (lastGood === undefined) throw error;
-      lastRaw = raw;
       ctx.logger.error(
         `${PKG}: keeping the last good configuration after an invalid config`,
       );
@@ -528,10 +558,12 @@ export function apply(ctx: Context, config: Config): void {
     },
   ]);
   // Route effects bind to this apply fiber via the stable `ctx` reference.
-  // The registry captures the retry policy at registration; a settings write
-  // that changes it reloads this entry (0.1.7 settings reload the owning
-  // plugin), so registration always sees a settled value and the 0.1.5-era
-  // in-place `registration.replace` hook is no longer needed.
+  // The route set is fixed — one provider, `neuralwatt` — so it never needs
+  // the 0.1.5-era in-place `registration.replace` hook. The retry policy is
+  // NOT captured here: `providerRetryPolicy()` reads it from the live
+  // `options()` snapshot, which is what lets a volatile settings write change
+  // it without this fiber being remounted. The one registration-captured fact
+  // is the route name itself, which no setting changes.
   ctx.llm.registerAdapter([PROVIDER], adapter);
   // Model discovery for the settings namespace this plugin owns: the Models
   // page interrogates the gateway's /models with the draft's endpoint and
@@ -567,6 +599,10 @@ export function apply(ctx: Context, config: Config): void {
     const connection = cctx.get("connection") as HostConnectionHandle;
     // The owner-taking overload is on the service prototype but not on
     // `HostConnectionHandle`, so the extra shape is declared here.
+    // SAFETY: invariant TypeScript cannot check — `connection` is the live
+    // `dsh-client-connection` service, whose prototype owns the owner-taking
+    // `register(owner, channel, handler)` overload this plugin calls; the
+    // published handle interface simply omits it.
     const registrar = connection as unknown as {
       register(
         owner: unknown,
@@ -634,8 +670,18 @@ export function apply(ctx: Context, config: Config): void {
     );
   });
 
-  // The settings form for this plugin is derived from the exported `Config`
-  // schema by the 0.1.7 settings service — there is no section to install.
-  // Refusal of an unserviceable value happens at the schema and at the
-  // profile write that carries it, not in a plugin-side validate hook.
+  // The 0.1.5 `settings.installSection` seam is gone; the 0.1.7 replacement is
+  // a per-instance presentation policy. This plugin owns a dedicated Neuralwatt
+  // section (credentials, discovery, models.dev params, quota), so the
+  // schema-derived generic page is switched off: the volatile marks on
+  // {@link Config} are what make the namespace describable and writable, not
+  // what should render a second, duplicate form. Refusal of an unserviceable
+  // value happens at the schema and at the profile write that carries it, not
+  // in a plugin-side validate hook.
+  ctx.inject(["settings"], (sctx) => {
+    sctx.effect(
+      () => sctx.settings.configure({ auto: false }, ctx.fiber),
+      "llm-neuralwatt: settings presentation policy",
+    );
+  });
 }
