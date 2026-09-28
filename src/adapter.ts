@@ -293,7 +293,11 @@ export function matchModelsDev(api: ModelsDevApi, id: string, hints?: ProviderHi
  */
 export function normalizeBaseUrl(raw: string): string {
   const base = raw.trim().replace(/\/+$/, '')
-  if (!/^https?:\/\//.test(base)) {
+  // Scheme match is case-insensitive: `HTTPS://host/v1` is a valid absolute URL
+  // (`URL` lowercases the scheme), and rejecting it would fail a value the
+  // fetch layer accepts. A `ftp://` value still fails here rather than silently
+  // reaching `fetch`, which refuses it with a far less actionable message.
+  if (!/^https?:\/\//i.test(base)) {
     throw new Error(`${PKG}: baseURL must be an absolute http(s) URL including the /v1 prefix, e.g. https://api.neuralwatt.com/v1 (got: ${raw.trim()})`)
   }
   // Look only at the path. A query string or fragment would otherwise defeat the
