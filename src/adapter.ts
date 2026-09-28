@@ -347,6 +347,31 @@ export function normalizeBaseUrl(raw: string): string {
       `${PKG}: baseURL host is ambiguous and would be rewritten to ${parsedHost} (got: ${raw.trim()}); write a hostname or a plain dotted-quad address`,
     )
   }
+  // The parser reads a port with leading zeros as decimal and drops the
+  // zeroes, so `:080` and `:00000` come back as `:80` and `:0`. That is a
+  // rewrite of the value the user named, and the settings schema refuses it,
+  // so repeat the rule for values that reach the resolver another way.
+  const typedAuthority = base.replace(/^https?:\/\//i, "").split(/[/?#]/)[0] ?? ""
+  const typedPort = /:(\d*)$/.exec(typedAuthority.replace(/^\[[^\]]*\]/, "[v6]"))?.[1]
+  if (typedPort !== undefined && typedPort.length > 1 && typedPort.startsWith("0")) {
+    throw new Error(
+      `${PKG}: baseURL port must not have leading zeros (got: ${typedPort}); write it as ${Number(typedPort)}`,
+    )
+  }
+  // A non-ASCII host takes a second, much larger class of rewrites through IDNA
+  // and the RFC 5893 bidi rule: `faß.de` resolves as `xn--fa-hia.de`, and a label
+  // mixing right-to-left and left-to-right letters (`xאy.com`) parses to nothing
+  // at all — `new URL` throws on it even though it has letters in every label.
+  // Comparing the typed host against `url.hostname` catches the punycode case,
+  // but the bidi case never gets that far, and the settings schema cannot be the
+  // only defence because a hand-edited profile or `$NEURALWATT_BASE_URL` skips
+  // it. Require the host to be exactly what the user typed and nothing else: the
+  // punycode spelling (`xn--fa-hia.de`) reaches the same servers and is accepted.
+  if (/[^\x00-\x7F]/.test(typedHostOf(base))) {
+    throw new Error(
+      `${PKG}: baseURL host must be ASCII (got: ${parsedHost}); write the internationalized name in its punycode form`,
+    )
+  }
   // `URL` resolves dot segments at parse time, before this code can see them, so
   // `https://api.neuralwatt.com/v1/chat/completions/../../../evil` silently
   // becomes `https://api.neuralwatt.com/evil` and every appended path — including

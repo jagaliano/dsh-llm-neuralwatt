@@ -24,7 +24,9 @@
  *   - `\` anywhere in the path (the parser treats it as `/` for http/https),
  *   - a segment consisting only of `.` or `..`,
  *   - an empty path segment (`//`), and
- *   - leading zeros in the port (so the stored port is the parsed port).
+ *   - leading zeros in the port (so the stored port is the parsed port), and
+ *   - any non-ASCII host (so IDNA punycoding, the bidi rule, and the rest of
+ *     UTS-46 cannot rewrite or reject a host the pattern let through).
  *
  * This module is shared with the browser bundle, so it must stay free of Node
  * built-ins: only `RegExp`, `URL`, and `decodeURIComponent` are used, all of
@@ -34,7 +36,13 @@
  * Shape every `baseURL` must have before it is persisted. Because no
  * alternative above can express a separator the parser would reinterpret, a
  * value matching this pattern is one {@link classifyBaseUrl} and
- * `normalizeBaseUrl` accept too. The assertion is checked by differential fuzz,
+ * `normalizeBaseUrl` accept too, including when it arrives in uppercase.
+ *
+ * The pattern carries the Unicode flag but deliberately NOT the `i` flag. The
+ * scheme is spelled out ([Hh][Tt][Tt][Pp][Ss]) because case-insensitive matching
+ * in Unicode mode folds non-ASCII characters onto ASCII ones — U+017F (long s)
+ * folds to `s` — which would let such a character satisfy `[A-Za-z]` while also
+ * escaping the `[^\x00-\x7F]` ASCII guard, since that negated range folds too. The assertion is checked by differential fuzz,
  * but it holds by construction, not by luck.
  */
 export declare const BASE_URL_PATTERN: RegExp;
@@ -76,8 +84,9 @@ export declare function hasDotSegment(raw: string): boolean;
  * cannot fire on a shape the pattern admitted; they remain because
  * `normalizeBaseUrl` also sees values from a hand-edited profile or the
  * environment, which never pass through the settings schema.
- * @param raw - the candidate endpoint. Surrounding whitespace is ignored;
- *   callers still trim what they write.
+ * @param raw - the candidate endpoint, tested exactly as given. Callers trim
+ *   before writing (the browser form) or before resolving (the adapter), so a
+ *   whitespace-padded value is refused here rather than silently accepted.
  * @returns the first defect found, or `undefined` when the value is usable.
  */
 export declare function classifyBaseUrl(raw: string): BaseUrlProblem | undefined;

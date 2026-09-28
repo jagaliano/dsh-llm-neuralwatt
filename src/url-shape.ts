@@ -24,7 +24,9 @@
  *   - `\` anywhere in the path (the parser treats it as `/` for http/https),
  *   - a segment consisting only of `.` or `..`,
  *   - an empty path segment (`//`), and
- *   - leading zeros in the port (so the stored port is the parsed port).
+ *   - leading zeros in the port (so the stored port is the parsed port), and
+ *   - any non-ASCII host (so IDNA punycoding, the bidi rule, and the rest of
+ *     UTS-46 cannot rewrite or reject a host the pattern let through).
  *
  * This module is shared with the browser bundle, so it must stay free of Node
  * built-ins: only `RegExp`, `URL`, and `decodeURIComponent` are used, all of
@@ -58,7 +60,7 @@ const IPV6 = String.raw`(?:` +
   String.raw`|(?:(?:${H16}:){0,6}${H16})?::` +
   String.raw`)`;
 /**
- * A dotted hostname whose final label begins with a letter. Requiring a letter
+ * A dotted ASCII hostname whose final label begins with a letter. Requiring a
  * (not merely "contains a letter") is what keeps every numeric spelling the
  * parser would reinterpret out of the accepted set: `9`, `0x7f`, `0177`, and
  * `0xdeadbeef` all start with a digit and are refused, while `localhost`,
@@ -66,7 +68,7 @@ const IPV6 = String.raw`(?:` +
  * IPv4 literals are handled by {@link IPV4} instead, so plain dotted quads still
  * work.
  */
-const HOSTNAME = String.raw`(?:[\p{L}\p{N}_~-]+\.)*\p{L}[\p{L}\p{N}_~-]*\.?`;
+const HOSTNAME = String.raw`(?:[A-Za-z0-9_~-]+\.)*[A-Za-z][A-Za-z0-9_~-]*\.?`;
 /**
  * A port bounded to 0-65535 with no leading zeros, so the value stored is
  * exactly the value parsed (`:080` and `:00000` are refused rather than being
@@ -98,12 +100,18 @@ const TAIL = String.raw`(?:\?[^\s]*)?(?:#[^\s]*)?`;
  * Shape every `baseURL` must have before it is persisted. Because no
  * alternative above can express a separator the parser would reinterpret, a
  * value matching this pattern is one {@link classifyBaseUrl} and
- * `normalizeBaseUrl` accept too. The assertion is checked by differential fuzz,
+ * `normalizeBaseUrl` accept too, including when it arrives in uppercase.
+ *
+ * The pattern carries the Unicode flag but deliberately NOT the `i` flag. The
+ * scheme is spelled out ([Hh][Tt][Tt][Pp][Ss]) because case-insensitive matching
+ * in Unicode mode folds non-ASCII characters onto ASCII ones — U+017F (long s)
+ * folds to `s` — which would let such a character satisfy `[A-Za-z]` while also
+ * escaping the `[^\x00-\x7F]` ASCII guard, since that negated range folds too. The assertion is checked by differential fuzz,
  * but it holds by construction, not by luck.
  */
 export const BASE_URL_PATTERN = new RegExp(
-  String.raw`^https?:\/\/(?:\[${IPV6}\]|${IPV4}|${HOSTNAME})${PORT}${PATH}${TAIL}$`,
-  "iu",
+  String.raw`^[Hh][Tt][Tt][Pp][Ss]?:\/\/(?![^/?#]*[^\x00-\x7F])(?:\[${IPV6}\]|${IPV4}|${HOSTNAME})${PORT}${PATH}${TAIL}$`,
+  "u",
 );
 
 /**
@@ -176,8 +184,9 @@ export function hasDotSegment(raw: string): boolean {
  * cannot fire on a shape the pattern admitted; they remain because
  * `normalizeBaseUrl` also sees values from a hand-edited profile or the
  * environment, which never pass through the settings schema.
- * @param raw - the candidate endpoint. Surrounding whitespace is ignored;
- *   callers still trim what they write.
+ * @param raw - the candidate endpoint, tested exactly as given. Callers trim
+ *   before writing (the browser form) or before resolving (the adapter), so a
+ *   whitespace-padded value is refused here rather than silently accepted.
  * @returns the first defect found, or `undefined` when the value is usable.
  */
 export function classifyBaseUrl(raw: string): BaseUrlProblem | undefined {
@@ -199,7 +208,7 @@ export function classifyBaseUrl(raw: string): BaseUrlProblem | undefined {
   }
   if (hasDotSegment(base)) return "dot-segments";
   if (pathOf(base).includes("%")) return "encoded-separator";
-  if (!BASE_URL_PATTERN.test(trimmed)) return "shape";
+  if (!BASE_URL_PATTERN.test(raw)) return "shape";
   return undefined;
 }
 

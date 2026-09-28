@@ -86,6 +86,14 @@ you did not type; the check covers the backslash spelling too, since the parser
 treats `\` as `/` for http(s). For the same reason the path may not contain a
 percent sign — an encoded dot, slash, or backslash could smuggle a segment or
 separator past the literal checks — and may not contain an empty segment.
+The host must also be plain ASCII: write an internationalized domain in its
+punycode form (`xn--fa-hia.de`), which reaches exactly the same servers. A
+Unicode host is refused because the URL parser rewrites or rejects many of
+them — `faß.de` becomes `xn--fa-hia.de`, and a label mixing right-to-left and
+left-to-right letters such as `xאy.com` is not a valid host at all — so no
+pattern can promise that every Unicode host it admits is one the parser leaves
+alone. A port with leading zeros (`:080`, `:00000`) is refused for the same
+reason: the parser would quietly read it as `:80` or `:0`.
 
 The check runs in two layers driven by one shared predicate, so they cannot
 disagree: the settings schema rejects the value on save, and `normalizeBaseUrl`
